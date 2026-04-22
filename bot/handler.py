@@ -174,48 +174,89 @@ class BaleBotHandler:
             except Exception as e:
                 self._log_error(f"Failed to save offset: {e}")
 
-        def _handle_bot_command(self, command: str) -> str:
-            """Handle bot-specific commands."""
-            cmd_parts = command.lower().split()
-            base_cmd = cmd_parts[0]
+    def _handle_bot_command(self, command: str) -> str:
+        """Handle bot-specific commands."""
+        cmd_parts = command.lower().split()
+        base_cmd = cmd_parts[0]
 
-            commands_help = {
-                "/start": "Welcome to Bale SSH Bot!\n\n"
-                         "Send any allowed Linux command and I'll execute it.\n\n"
-                         "Commands:\n"
-                         "/help - Show this help\n"
-                         "/status - Show bot status\n"
-                         "/ping - Check connectivity\n"
-                         "/allowed - List allowed commands",
+        commands_help = {
+            "/start": "🚀 **Welcome to Bale SSH Bot - UNRESTRICTED VERSION**\n\n"
+                     "⚠️ **WARNING:** This bot has NO SECURITY RESTRICTIONS!\n"
+                     "ALL commands will be executed.\n\n"
+                     "Commands:\n"
+                     "/help - Show this help\n"
+                     "/status - Show bot status\n"
+                     "/ping - Check connectivity\n"
+                     "/env - Show environment variables\n"
+                     "/shell - Interactive shell mode info\n\n"
+                     "**Send any command to execute it directly!**",
 
-                "/help": "**Available Commands:**\n\n"
-                        "/start - Start bot\n"
-                        "/help - Show this help\n"
-                        "/status - Show system status\n"
-                        "/ping - Test connectivity\n"
-                        "/allowed - List allowed commands\n"
-                        "/env - Show environment (safe vars only)\n\n"
-                        "**Allowed shell commands:**\n"
-                        + ", ".join(sorted(self.config.allowed_commands[:20])) + "...\n\n"
-                        "**Examples:**\n"
-                        "`ls -la`\n"
-                        "`pwd`\n"
-                        "`python --version`\n"
-                        "`git status`\n"
-                        "`df -h`",
+            "/help": "**🔓 UNRESTRICTED BOT - Available Commands:**\n\n"
+                    "/start - Start bot\n"
+                    "/help - Show this help\n"
+                    "/status - Show system status\n"
+                    "/ping - Test connectivity\n"
+                    "/env - Show all environment variables\n"
+                    "/shell - Interactive shell tips\n\n"
+                    "**💻 ANY shell command is allowed:**\n"
+                    "• Full bash syntax supported\n"
+                    "• Multi-line commands with heredoc\n"
+                    "• Pipes, redirects, command substitution\n"
+                    "• Background processes (use with caution)\n\n"
+                    "**Examples:**\n"
+                    "`ls -la`\n"
+                    "`find / -name '*.py' 2>/dev/null | head -20`\n"
+                    "`python3 -c 'print(\"Hello\")'`\n"
+                    "`curl -s https://api.github.com/repos/torvalds/linux`\n"
+                    "`cat > /tmp/test.txt << EOF\\nline1\\nline2\\nEOF`",
 
-                "/status": self._get_system_status(),
+            "/status": self._get_system_status(),
 
-                "/ping": "🏓 Pong! Bot is running.\n"
-                        f"Timestamp: {datetime.now().isoformat()}",
+            "/ping": "🏓 Pong! Bot is running (UNRESTRICTED MODE).\n"
+                    f"Timestamp: {datetime.now().isoformat()}",
 
-                "/allowed": f"**Allowed Commands ({len(self.config.allowed_commands)}):**\n"
-                           + "\n".join(f"• `{cmd}`" for cmd in sorted(self.config.allowed_commands)),
+            "/env": self._get_all_env_vars(),
 
-                "/env": self._get_safe_env_vars(),
-            }
+            "/shell": "**🐚 Interactive Shell Tips:**\n\n"
+                     "Since each command runs in a fresh session, for multi-step tasks:\n\n"
+                     "1️⃣ Use semicolons: `cd /tmp; ls -la; pwd`\n"
+                     "2️⃣ Use subshells: `(cd /tmp && ls -la)`\n"
+                     "3️⃣ Save state to files: `echo 'data' > /tmp/state.txt`\n"
+                     "4️⃣ Use environment: `export FOO=bar; echo $FOO`\n"
+                     "5️⃣ Here-documents for multi-line input:\n"
+                     "```\n"
+                     "cat > /tmp/script.sh << 'SCRIPT'\n"
+                     "#!/bin/bash\n"
+                     "echo 'Hello'\n"
+                     "ls -la\n"
+                     "SCRIPT\n"
+                     "chmod +x /tmp/script.sh && /tmp/script.sh\n"
+                     "```",
+        }
 
-            return commands_help.get(base_cmd, f"Unknown command: {base_cmd}\nType /help for available commands.")
+        return commands_help.get(base_cmd, f"Unknown command: {base_cmd}\nType /help for available commands.")
+    
+    def _get_all_env_vars(self) -> str:
+        """Get ALL environment variables (no filtering)."""
+        import os
+        
+        lines = ["**🌍 All Environment Variables:**"]
+        
+        # Sort and display all env vars
+        for key, value in sorted(os.environ.items()):
+            # Mask sensitive values partially
+            if any(sensitive in key.upper() for sensitive in ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'PASS']):
+                if value:
+                    value = value[:4] + "..." + value[-4:] if len(value) > 8 else "***"
+            else:
+                # Truncate very long values
+                if len(value) > 200:
+                    value = value[:197] + "..."
+            
+            lines.append(f"• `{key}` = `{value}`")
+        
+        # Split into chunks if too large
+        return "\n".join(lines)
     
     def _get_system_status(self) -> str:
         """Get system status information."""
