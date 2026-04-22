@@ -3,6 +3,7 @@ import subprocess
 import time
 import os
 import uuid
+import signal
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -16,7 +17,7 @@ class ManagedProcess:
         self.stderr_lines = []
         self.exit_code = None
         self.start_time = time.time()
-        self.status = "pending"  # pending, running, completed, killed, timeout
+        self.status = "pending"
         self.thread = None
         
     def start(self):
@@ -34,7 +35,7 @@ class ManagedProcess:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                preexec_fn=os.setsid  # برای kill کردن کل group
+                preexec_fn=os.setsid
             )
             stdout, stderr = self.process.communicate(timeout=self.timeout)
             self.exit_code = self.process.returncode
