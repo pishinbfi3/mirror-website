@@ -14,6 +14,7 @@ from datetime import datetime
 from .config import BotConfig
 from .executor import CommandExecutor
 from .security import CommandSecurity
+from .process_manager import ProcessManager
 
 
 class BaleBotHandler:
@@ -26,6 +27,8 @@ class BaleBotHandler:
             "User-Agent": "Bale-SSH-Bot/1.0",
             "Accept": "application/json"
         })
+        self.process_manager = ProcessManager()
+        self.executor.process_manager = self.process_manager  # اتصال
 
     # ---------- API methods ----------
     def get_updates(self, offset: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -127,31 +130,34 @@ class BaleBotHandler:
             return None
 
     def split_and_send_file(self, file_path: str, original_name: str) -> bool:
-        MAX_SIZE = 10 * 1024 * 1024
-        CHUNK_SIZE = 9 * 1024 * 1024
+        """Split a large file into 9MB chunks and send them."""
+        MAX_SIZE = 10 * 1024 * 1024   # 10 MB
+        CHUNK_SIZE = 9 * 1024 * 1024  # 9 MB chunks
+        
         file_size = os.path.getsize(file_path)
+        
+        # اگر فایل کوچک است، مستقیم بفرست
         if file_size <= MAX_SIZE:
             return self.send_file(file_path, f"📁 {original_name} ({file_size//1024} KB)")
-
-        zip_name = f"/tmp/{original_name}.zip"
-        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.write(file_path, arcname=original_name)
-
+        
+        # فایل بزرگ: تقسیم به قطعات (بدون zip اضافی)
         part_num = 1
-        with open(zip_name, 'rb') as f_in:
+        with open(file_path, 'rb') as f_in:
             while True:
                 chunk = f_in.read(CHUNK_SIZE)
                 if not chunk:
                     break
-                part_path = f"/tmp/{original_name}.zip.part{part_num:03d}"
+                part_path = f"/tmp/{original_name}.part{part_num:03d}"
                 with open(part_path, 'wb') as f_out:
                     f_out.write(chunk)
-                caption = f"📦 {original_name} (part {part_num}) – combine: cat {original_name}.zip.part* > {original_name}.zip && unzip {original_name}.zip"
+                
+                caption = (f"📦 {original_name} (part {part_num}/{file_size//CHUNK_SIZE + 1})\n"
+                           f"🔧 Combine: `cat {original_name}.part* > {original_name}`")
                 if not self.send_file(part_path, caption):
                     return False
                 os.unlink(part_path)
                 part_num += 1
-        os.unlink(zip_name)
+        
         return True
 
     def handle_document(self, message: Dict[str, Any]) -> str:
@@ -170,22 +176,23 @@ class BaleBotHandler:
 
     # ---------- Command processing ----------
     def process_command(self, command: str) -> Tuple[str, Optional[str]]:
-        try:
-            if command.startswith('/'):
-                return self._handle_bot_command(command), None
-
-            self.send_chat_action("typing")
-            exit_code, stdout, stderr, exec_time = self.executor.execute(command)
-            response = self._format_command_response(command, exit_code, stdout, stderr, exec_time)
-            file_path = None
-            if len(response) > self.config.max_message_length:
-                file_path = self._save_output_to_file(command, stdout, stderr)
-                response = f"📁 Output saved to file (too large for message)\nCommand: `{command}`\nExit: {exit_code}\nTime: {exec_time:.2f}s"
-            return response, file_path
-        except Exception as e:
-            error_trace = traceback.format_exc()
-            print(f"❌ Exception in process_command: {error_trace}", flush=True)
-            return f"❌ Internal error: {str(e)}", None
+        command = command.strip()
+        # اگر دستور با / شروع شود، همان رفتار قبل
+        if command.startswith('/'):
+            return self._handle_bot_command(command), None
+        
+        # بررسی برای اجرای پس‌زمینه (مثلاً `ls -la &` یا `!ls -la`)
+        background = False
+        if command.endswith(' &'):
+            background = True
+            command = command[:-2].strip()
+        elif command.startswith('!'):
+            background = True
+            command = command[1:].strip()
+        
+        if background:
+            job_id = self.process_manager.submit(command)
+            return f"🔄 Running in background: job `{job_id}`\nUse `/jobs` to track, `/kill {job_id}` to stop.", None
 
     def _handle_bot_command(self, command: str) -> str:
         cmd_parts = command.lower().split()
@@ -198,14 +205,31 @@ class BaleBotHandler:
                 return self._get_help_text()
             elif base_cmd == "/download":
                 if len(cmd_parts) < 2:
-                    return "❌ Usage: `/download <filepath>`"
-                filepath = cmd_parts[1]
-                if not os.path.exists(filepath):
-                    return f"❌ File not found: {filepath}"
-                if self.split_and_send_file(filepath, os.path.basename(filepath)):
-                    return f"✅ Sending `{filepath}` (split if >10MB)"
+                    return "❌ Usage: `/download <path>` (file or directory)"
+
+                path = cmd_parts[1]
+
+                # بررسی وجود فایل یا دایرکتوری
+                if not os.path.exists(path):
+                    return f"❌ Not found: {path}"
+
+                # اگر دایرکتوری است، ابتدا zip کن
+                if os.path.isdir(path):
+                    zip_path = f"/tmp/{os.path.basename(path)}.zip"
+                    import shutil
+                    shutil.make_archive(zip_path.replace('.zip', ''), 'zip', path)
+                    success = self.split_and_send_file(zip_path, os.path.basename(zip_path))
+                    os.unlink(zip_path)
+                    if success:
+                        return f"✅ Sending directory `{path}` as ZIP (split if needed)"
+                    else:
+                        return f"❌ Failed to send directory"
+
+                # اگر فایل است
+                if self.split_and_send_file(path, os.path.basename(path)):
+                    return f"✅ Sending `{path}` (split if >10MB)"
                 else:
-                    return f"❌ Failed to send file."
+                    return f"❌ Failed to send file"
             elif base_cmd == "/upload":
                 return "📤 Please send a document (file) to upload it to the current directory."
             elif base_cmd == "/edit":
@@ -263,6 +287,34 @@ class BaleBotHandler:
             elif base_cmd == "/mem":
                 _, out, _, _ = self.executor.execute("free -h")
                 return f"**🧠 Memory**\n```\n{out}\n```"
+            elif base_cmd == "/bg" or base_cmd == "/background":
+                if len(cmd_parts) < 2:
+                    return "❌ Usage: `/bg <command>` – run command in background"
+                bg_command = ' '.join(cmd_parts[1:])
+                job_id = self.process_manager.submit(bg_command)
+                return f"🔄 Job `{job_id}` started in background.\nUse `/jobs` to see status, `/kill {job_id}` to stop."
+
+            elif base_cmd == "/jobs":
+                return self.process_manager.list_jobs()
+
+            elif base_cmd == "/kill":
+                if len(cmd_parts) < 2:
+                    return "❌ Usage: `/kill <job_id>`"
+                job_id = cmd_parts[1]
+                if self.process_manager.kill(job_id):
+                    return f"✅ Killed job `{job_id}`"
+                else:
+                    return f"❌ Job `{job_id}` not found or already finished."
+
+            elif base_cmd == "/output":
+                if len(cmd_parts) < 2:
+                    return "❌ Usage: `/output <job_id>`"
+                job_id = cmd_parts[1]
+                out = self.process_manager.get_output(job_id)
+                if out:
+                    return f"**📄 Output for job `{job_id}`:**\n```\n{out[:3000]}\n```"
+                else:
+                    return f"❌ Job `{job_id}` not found or has no output."
             else:
                 return self._get_help_text()
         except Exception as e:
