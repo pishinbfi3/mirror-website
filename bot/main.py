@@ -27,7 +27,6 @@ def setup_environment():
 def cleanup_old_files():
     """Clean up old temporary files."""
     import glob
-    import time
     
     patterns = [
         "/tmp/bale_output_*.txt",
@@ -72,23 +71,26 @@ def main():
     offset = handler.get_offset()
     print(f"📝 Last offset: {offset}")
     
-    # Maximum number of iterations (prevent infinite loops in Actions)
-    max_iterations = 999999
-    iteration = 0
     processed_messages = 0
+    max_empty_iterations = 3  # Stop after 3 empty polls
+    empty_count = 0
     
-    # Process updates
+    # Process updates continuously
     try:
-        while iteration < max_iterations:
-            iteration += 1
-            
+        while empty_count < max_empty_iterations:
             # Get updates
             updates = handler.get_updates(offset)
             
             if not updates:
-                print(f"⏳ No new messages (iteration {iteration}/{max_iterations})")
-                break
+                empty_count += 1
+                print(f"⏳ No new messages ({empty_count}/{max_empty_iterations})")
+                
+                # Check if we're near GitHub Actions timeout (5 minutes warning)
+                # GitHub Actions timeout is usually 6 hours, so we're fine
+                continue
             
+            # Reset empty counter when we get messages
+            empty_count = 0
             print(f"📨 Processing {len(updates)} update(s)")
             
             for update in updates:
@@ -145,7 +147,7 @@ def main():
                     traceback.print_exc()
                     handler.send_message(f"❌ Internal error: {str(e)}", message_id)
             
-            # Save offset after processing
+            # Save offset after processing each batch
             handler.save_offset(offset)
             
             # Small delay to prevent rate limiting
@@ -162,7 +164,6 @@ def main():
         print(f"\n📊 Summary:")
         print(f"   Processed messages: {processed_messages}")
         print(f"   Final offset: {offset}")
-        print(f"   Iterations: {iteration}")
     
     print("👋 Bot finished")
 
