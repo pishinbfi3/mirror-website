@@ -106,118 +106,116 @@ class BaleBotHandler:
             self._log_error(f"Error sending file: {e}")
             return False
     
-    def process_command(self, command: str) -> Tuple[str, Optional[str]]:
-        """Process a shell command and return response and optional file path."""
-        # Handle special commands
-        if command.startswith('/'):
-            return self._handle_bot_command(command), None
+        # در متد process_command، بخش validation رو اینطور تغییر بده:
         
-        # Validate command
-        is_valid, error = CommandSecurity.validate_command(
-            command, 
-            self.config.allowed_commands
-        )
-        
-        if not is_valid:
-            return f"❌ Command rejected: {error}", None
-        
-        # Sanitize and execute
-        sanitized = CommandSecurity.sanitize_command(command)
-        
-        # Send typing indicator
-        self.send_chat_action("typing")
-        
-        # Execute command
-        exit_code, stdout, stderr, exec_time = self.executor.execute(sanitized)
-        
-        # Format response
-        response = self._format_command_response(
-            command, exit_code, stdout, stderr, exec_time
-        )
-        
-        # If output is too large, save to file
-        file_path = None
-        if len(response) > self.config.max_message_length:
-            file_path = self._save_output_to_file(command, stdout, stderr)
-            response = f"📁 Output saved to file (too large for message)\n"
-            response += f"Command: `{command}`\n"
-            response += f"Exit code: {exit_code}\n"
-            response += f"Time: {exec_time:.2f}s"
-        
-        return response, file_path
-    
-    def send_chat_action(self, action: str = "typing") -> bool:
-        """Send chat action indicator."""
-        url = f"{self.base_url}/sendChatAction"
-        payload = {
-            "chat_id": self.config.chat_id,
-            "action": action
-        }
-        
-        try:
-            response = self.session.post(url, json=payload, timeout=10)
-            return response.json().get("ok", False)
-        except Exception:
-            return False
-    
-    def get_offset(self) -> int:
-        """Read last update offset from file."""
-        try:
-            with open(self.config.update_offset_file, 'r') as f:
-                return int(f.read().strip())
-        except (FileNotFoundError, ValueError):
-            return 0
-    
-    def save_offset(self, offset: int):
-        """Save last update offset to file."""
-        try:
-            with open(self.config.update_offset_file, 'w') as f:
-                f.write(str(offset))
-        except Exception as e:
-            self._log_error(f"Failed to save offset: {e}")
-    
-    def _handle_bot_command(self, command: str) -> str:
-        """Handle bot-specific commands."""
-        cmd_parts = command.lower().split()
-        base_cmd = cmd_parts[0]
-        
-        commands_help = {
-            "/start": "Welcome to Bale SSH Bot!\n\n"
-                     "Send any allowed Linux command and I'll execute it.\n\n"
-                     "Commands:\n"
-                     "/help - Show this help\n"
-                     "/status - Show bot status\n"
-                     "/ping - Check connectivity\n"
-                     "/allowed - List allowed commands",
+        def process_command(self, command: str) -> Tuple[str, Optional[str]]:
+            """Process a shell command and return response and optional file path."""
+            # Handle special commands
+            if command.startswith('/'):
+                return self._handle_bot_command(command), None
             
-            "/help": "**Available Commands:**\n\n"
-                    "/start - Start bot\n"
-                    "/help - Show this help\n"
-                    "/status - Show system status\n"
-                    "/ping - Test connectivity\n"
-                    "/allowed - List allowed commands\n"
-                    "/env - Show environment (safe vars only)\n\n"
-                    "**Allowed shell commands:**\n"
-                    + ", ".join(sorted(self.config.allowed_commands[:20])) + "...\n\n"
-                    "**Examples:**\n"
-                    "`ls -la`\n"
-                    "`pwd`\n"
-                    "`python --version`\n"
-                    "`git status`\n"
-                    "`df -h`",
+            # NO VALIDATION - ALL COMMANDS ALLOWED
+            is_valid, error = CommandSecurity.validate_command(command)
             
-            "/status": self._get_system_status(),
+            if not is_valid:
+                return f"❌ Command rejected: {error}", None
             
-            "/ping": "🏓 Pong! Bot is running.\n"
-                    f"Timestamp: {datetime.now().isoformat()}",
+            # Minimal sanitization
+            sanitized = CommandSecurity.sanitize_command(command)
             
-            "/allowed": f"**Allowed Commands ({len(self.config.allowed_commands)}):**\n"
-                       + "\n".join(f"• `{cmd}`" for cmd in sorted(self.config.allowed_commands)),
+            # Send typing indicator
+            self.send_chat_action("typing")
             
-            "/env": self._get_safe_env_vars(),
-        }
-        
-        return commands_help.get(base_cmd, f"Unknown command: {base_cmd}\nType /help for available commands.")
+            # Execute command
+            exit_code, stdout, stderr, exec_time = self.executor.execute(sanitized)
+            
+            # Format response
+            response = self._format_command_response(
+                command, exit_code, stdout, stderr, exec_time
+            )
+            
+            # If output is too large, save to file
+            file_path = None
+            if len(response) > self.config.max_message_length:
+                file_path = self._save_output_to_file(command, stdout, stderr)
+                response = f"📁 Output saved to file (too large for message)\n"
+                response += f"Command: `{command}`\n"
+                response += f"Exit code: {exit_code}\n"
+                response += f"Time: {exec_time:.2f}s"
+            
+            return response, file_path
+        def send_chat_action(self, action: str = "typing") -> bool:
+            """Send chat action indicator."""
+            url = f"{self.base_url}/sendChatAction"
+            payload = {
+                "chat_id": self.config.chat_id,
+                "action": action
+            }
+
+            try:
+                response = self.session.post(url, json=payload, timeout=10)
+                return response.json().get("ok", False)
+            except Exception:
+                return False
+
+        def get_offset(self) -> int:
+            """Read last update offset from file."""
+            try:
+                with open(self.config.update_offset_file, 'r') as f:
+                    return int(f.read().strip())
+            except (FileNotFoundError, ValueError):
+                return 0
+
+        def save_offset(self, offset: int):
+            """Save last update offset to file."""
+            try:
+                with open(self.config.update_offset_file, 'w') as f:
+                    f.write(str(offset))
+            except Exception as e:
+                self._log_error(f"Failed to save offset: {e}")
+
+        def _handle_bot_command(self, command: str) -> str:
+            """Handle bot-specific commands."""
+            cmd_parts = command.lower().split()
+            base_cmd = cmd_parts[0]
+
+            commands_help = {
+                "/start": "Welcome to Bale SSH Bot!\n\n"
+                         "Send any allowed Linux command and I'll execute it.\n\n"
+                         "Commands:\n"
+                         "/help - Show this help\n"
+                         "/status - Show bot status\n"
+                         "/ping - Check connectivity\n"
+                         "/allowed - List allowed commands",
+
+                "/help": "**Available Commands:**\n\n"
+                        "/start - Start bot\n"
+                        "/help - Show this help\n"
+                        "/status - Show system status\n"
+                        "/ping - Test connectivity\n"
+                        "/allowed - List allowed commands\n"
+                        "/env - Show environment (safe vars only)\n\n"
+                        "**Allowed shell commands:**\n"
+                        + ", ".join(sorted(self.config.allowed_commands[:20])) + "...\n\n"
+                        "**Examples:**\n"
+                        "`ls -la`\n"
+                        "`pwd`\n"
+                        "`python --version`\n"
+                        "`git status`\n"
+                        "`df -h`",
+
+                "/status": self._get_system_status(),
+
+                "/ping": "🏓 Pong! Bot is running.\n"
+                        f"Timestamp: {datetime.now().isoformat()}",
+
+                "/allowed": f"**Allowed Commands ({len(self.config.allowed_commands)}):**\n"
+                           + "\n".join(f"• `{cmd}`" for cmd in sorted(self.config.allowed_commands)),
+
+                "/env": self._get_safe_env_vars(),
+            }
+
+            return commands_help.get(base_cmd, f"Unknown command: {base_cmd}\nType /help for available commands.")
     
     def _get_system_status(self) -> str:
         """Get system status information."""
