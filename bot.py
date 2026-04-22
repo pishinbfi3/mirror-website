@@ -10,6 +10,10 @@ import aiohttp
 
 TOKEN = os.getenv("BALE_BOT_TOKEN")
 ALLOWED_CHAT_ID = os.getenv("BALE_CHAT_ID")
+# اصلاح این خط:
+ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "true")
+ENABLE_TELEGRAM = ENABLE_TELEGRAM.strip().lower() == "true" if ENABLE_TELEGRAM else True
+ALLOWED_CHAT_ID = os.getenv("BALE_CHAT_ID")
 ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "true").lower() == "true"
 
 BALE_API_URL = f"https://tapi.bale.ai/bot{TOKEN}"
