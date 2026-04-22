@@ -27,7 +27,7 @@ class BaleBotHandler:
             "Accept": "application/json"
         })
 
-    # ---------- API methods (unchanged) ----------
+    # ---------- API methods ----------
     def get_updates(self, offset: Optional[int] = None) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/getUpdates"
         params = {"timeout": 30, "limit": 10}
@@ -105,7 +105,7 @@ class BaleBotHandler:
         except Exception as e:
             self._log_error(f"Failed to save offset: {e}")
 
-    # ---------- File handling (unchanged) ----------
+    # ---------- File handling ----------
     def download_file(self, file_id: str) -> Optional[str]:
         url = f"{self.base_url}/getFile"
         try:
@@ -170,7 +170,6 @@ class BaleBotHandler:
 
     # ---------- Command processing ----------
     def process_command(self, command: str) -> Tuple[str, Optional[str]]:
-        """Process a shell command or bot command."""
         try:
             if command.startswith('/'):
                 return self._handle_bot_command(command), None
@@ -299,7 +298,6 @@ class BaleBotHandler:
 """
 
     def _get_system_info(self) -> str:
-        """Return extensive system information using the executor."""
         info = []
         try:
             _, uname, _, _ = self.executor.execute("uname -a")
@@ -360,3 +358,8 @@ class BaleBotHandler:
                 f.write(f"{datetime.now().isoformat()} - {message}\n")
         except Exception:
             pass
+
+    def close(self):
+        """Clean up resources (nothing to close for CommandExecutor)."""
+        # Executor doesn't hold any persistent processes, so just pass
+        pass
