@@ -8,8 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout this repository
         uses: actions/checkout@v4
+
+      - name: Clone PornHub Downloader
+        run: |
+          git clone https://github.com/mariosemes/PornHub-downloader-python.git phdler_repo
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -18,14 +22,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
           pip install requests
+          pip install -r phdler_repo/requirements.txt
 
-      - name: Run bot
+      - name: Run Bale Bot
         env:
           BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
-          WORKDIR: /tmp/phdler_workdir
-          DOWNLOAD_DIR: /tmp/phdler_downloads
+          WORKDIR: ${{ github.workspace }}/phdler_repo
+          DOWNLOAD_DIR: ${{ github.workspace }}/downloads
         run: |
           python3 bale_bot.py
