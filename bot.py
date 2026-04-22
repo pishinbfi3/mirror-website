@@ -1,33 +1,11 @@
-"""Telegram bot for managing PornHub-downloader-python.
-
-This script uses the `python-telegram-bot` library to expose a simple
-interface for the downloader. It supports the following commands:
-
-* ``/start`` – Show a welcome message.
-* ``/run <action> [args...]`` – Execute ``phdler.py`` with the given
-  ``action`` and optional arguments. The output is streamed back to the
-  user and also written to a log file.
-* ``/log`` – Send the last few lines of the log file.
-
-Configuration is performed via environment variables:
-
-* ``BALE_BOT_TOKEN`` – Telegram bot token (required).
-* ``BALE_CHAT_ID`` – Chat ID where the bot is allowed to respond (optional).
-* ``ENABLE_TELEGRAM`` – Set to ``true`` to start the bot (default: ``true``).
-
-All logs are stored under the ``logs`` directory. The bot runs the
-downloader in a subprocess, captures ``stdout``/``stderr`` and forwards
-the output to the user in real‑time.
-"""
-
 import os
 import shlex
 import subprocess
 import sys
+import requests
+import asyncio
 from pathlib import Path
-
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from typing import Optional, Dict, Any
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,10 +14,11 @@ TOKEN = os.getenv("BALE_BOT_TOKEN")
 CHAT_ID = os.getenv("BALE_CHAT_ID")  # optional – restricts bot to a chat
 ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "true").lower() == "true"
 
-# Path to the downloader directory – the original project is cloned into a
-# subdirectory named ``PornHub-downloader-python-master``. ``phdler.py`` lives
-# inside that folder.
-DOWNLOADER_DIR = Path.cwd() / "PornHub-downloader-python-master"
+# بله API base URL
+BALE_API_URL = f"https://tapi.bale.ai/bot{TOKEN}"
+
+# Path to the downloader directory
+DOWNLOADER_DIR = Path.cwd() / "a-downloader-python-master"
 PHDLER_SCRIPT = DOWNLOADER_DIR / "phdler.py"
 
 LOG_DIR = DOWNLOADER_DIR / "logs"
@@ -47,116 +26,173 @@ LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "bot.log"
 
 
-def _restricted(func):
-    """Decorator that restricts the bot to a specific chat if ``CHAT_ID`` is set.
-
-    If ``CHAT_ID`` is not defined, the bot will respond to any chat.
-    """
-
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if CHAT_ID and str(update.effective_chat.id) != CHAT_ID:
-            # Silently ignore messages from unauthorized chats.
+class BaleBot:
+    def __init__(self, token: str, allowed_chat_id: Optional[str] = None):
+        self.token = token
+        self.allowed_chat_id = allowed_chat_id
+        self.base_url = f"https://tapi.bale.ai/bot{token}"
+        self.offset = 0
+        self.running = True
+    
+    def _call_api(self, method: str, params: Dict[str, Any] = None) -> Optional[Dict]:
+        """فراخوانی API بله"""
+        url = f"{self.base_url}/{method}"
+        try:
+            response = requests.post(url, json=params or {}, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("ok"):
+                    return data
+                else:
+                    print(f"API error: {data.get('description')}")
+            return None
+        except Exception as e:
+            print(f"API call failed: {e}")
+            return None
+    
+    async def send_message(self, chat_id: int, text: str) -> bool:
+        """ارسال پیام به کاربر"""
+        result = self._call_api("sendMessage", {
+            "chat_id": chat_id,
+            "text": text
+        })
+        return result is not None
+    
+    async def get_updates(self) -> list:
+        """دریافت آپدیت‌های جدید"""
+        result = self._call_api("getUpdates", {
+            "offset": self.offset,
+            "timeout": 30
+        })
+        
+        if result and result.get("result"):
+            updates = result["result"]
+            if updates:
+                self.offset = updates[-1]["update_id"] + 1
+            return updates
+        return []
+    
+    def _is_allowed(self, chat_id: int) -> bool:
+        """بررسی مجوز چت"""
+        if self.allowed_chat_id and str(chat_id) != self.allowed_chat_id:
+            return False
+        return True
+    
+    async def handle_update(self, update: Dict):
+        """پردازش یک آپدیت"""
+        if "message" not in update:
             return
-        return await func(update, context)
-
-    return wrapper
-
-
-@_restricted
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the ``/start`` command – send a short help message."""
-    help_text = (
-        "Welcome! I can manage the PornHub downloader for you.\n\n"
-        "Available commands:\n"
-        "/run <action> [args...] – Execute ``phdler.py``. Example: ``/run start``\n"
-        "/log – Show the last 20 lines of the bot log."
-    )
-    await update.message.reply_text(help_text)
-
-
-def _run_phdler(action: str, args: list[str]) -> subprocess.Popen:
-    """Start ``phdler.py`` as a subprocess.
-
-    The command is built as ``python3 phdler.py <action> [args...]``.
-    ``stdout`` and ``stderr`` are merged and streamed line‑by‑line.
-    """
-    cmd = [sys.executable, str(PHDLER_SCRIPT), action] + args
-    # ``text=True`` gives us strings instead of bytes.
-    return subprocess.Popen(
-        cmd,
-        cwd=DOWNLOADER_DIR,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-
-
-@_restricted
-async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the ``/run`` command.
-
-    The user supplies an action and optional arguments. The bot executes the
-    downloader and streams the output back to the chat. All output is also
-    appended to ``logs/bot.log``.
-    """
-    if not context.args:
-        await update.message.reply_text("Usage: /run <action> [args...]")
-        return
-
-    action = context.args[0]
-    args = context.args[1:]
-
-    await update.message.reply_text(f"Running: {action} {' '.join(args)}")
-
-    process = _run_phdler(action, args)
-    # Stream output line by line.
-    for line in process.stdout:
-        line = line.rstrip()
-        # Write to log file.
-        LOG_FILE.write_text(LOG_FILE.read_text(encoding="utf-8") + line + "\n", encoding="utf-8")
-        # Send to Telegram – split long messages to respect Telegram limits.
-        if len(line) > 4000:
-            # Break into chunks of 4000 characters.
+        
+        message = update["message"]
+        chat_id = message["chat"]["id"]
+        
+        if not self._is_allowed(chat_id):
+            return
+        
+        if "text" not in message:
+            return
+        
+        text = message["text"]
+        if not text.startswith("/"):
+            return
+        
+        # پردازش کامندها
+        parts = text.split()
+        command = parts[0].lower()
+        args = parts[1:] if len(parts) > 1 else []
+        
+        if command == "/start":
+            await self.cmd_start(chat_id)
+        elif command == "/run" and args:
+            await self.cmd_run(chat_id, args)
+        elif command == "/log":
+            await self.cmd_log(chat_id)
+    
+    async def cmd_start(self, chat_id: int):
+        """دستور start"""
+        help_text = (
+            "به ربات دانلودر خوش آمدید!\n\n"
+            "دستورات موجود:\n"
+            "/run <action> [args...] - اجرای phdler.py\n"
+            "/log - نمایش ۲۰ خط آخر لاگ"
+        )
+        await self.send_message(chat_id, help_text)
+    
+    async def cmd_run(self, chat_id: int, args: list):
+        """دستور run"""
+        if not args:
+            await self.send_message(chat_id, "Usage: /run <action> [args...]")
+            return
+        
+        action = args[0]
+        cmd_args = args[1:]
+        
+        await self.send_message(chat_id, f"در حال اجرا: {action} {' '.join(cmd_args)}")
+        
+        # اجرای فرآیند
+        cmd = [sys.executable, str(PHDLER_SCRIPT), action] + cmd_args
+        process = subprocess.Popen(
+            cmd,
+            cwd=DOWNLOADER_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        # ارسال خروجی خط به خط
+        for line in process.stdout:
+            line = line.rstrip()
+            # ذخیره در لاگ فایل
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            
+            # ارسال به بله (تقسیم به بخش‌های ۴۰۰۰ کاراکتری)
             for i in range(0, len(line), 4000):
-                await update.message.reply_text(line[i : i + 4000])
-        else:
-            await update.message.reply_text(line)
+                await self.send_message(chat_id, line[i:i+4000])
+        
+        return_code = process.wait()
+        await self.send_message(chat_id, f"فرآیند با کد خروج {return_code} به پایان رسید.")
+    
+    async def cmd_log(self, chat_id: int):
+        """دستور log"""
+        if not LOG_FILE.exists():
+            await self.send_message(chat_id, "فایل لاگ یافت نشد.")
+            return
+        
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()[-20:]
+        
+        log_text = "".join(lines) or "لاگ خالی است."
+        await self.send_message(chat_id, log_text)
+    
+    async def run(self):
+        """حلقه اصلی ربات"""
+        print("ربات بله در حال اجرا است...")
+        
+        while self.running:
+            try:
+                updates = await self.get_updates()
+                for update in updates:
+                    await self.handle_update(update)
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                await asyncio.sleep(5)
 
-    return_code = process.wait()
-    await update.message.reply_text(f"Process finished with exit code {return_code}.")
 
-
-@_restricted
-async def log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send the last 20 lines of the log file to the user."""
-    if not LOG_FILE.exists():
-        await update.message.reply_text("Log file not found.")
-        return
-    lines = LOG_FILE.read_text(encoding="utf-8").splitlines()[-20:]
-    await update.message.reply_text("\n".join(lines) or "Log is empty.")
-
-
-async def main() -> None:
+async def main():
     if not ENABLE_TELEGRAM:
-        print("Telegram integration is disabled (ENABLE_TELEGRAM=false).")
+        print("Telegram integration is disabled")
         return
+    
     if not TOKEN:
         print("Error: BALE_BOT_TOKEN environment variable is not set.")
         sys.exit(1)
-
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("run", run))
-    app.add_handler(CommandHandler("log", log))
-
-    print("Bot is starting…")
-    await app.run_polling()
+    
+    bot = BaleBot(TOKEN, CHAT_ID)
+    await bot.run()
 
 
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(main())
-
