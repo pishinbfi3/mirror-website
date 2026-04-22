@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Main entry point for Bale SSH Bot with stateful executor and message age filter."""
+"""Main entry point for Bale SSH Bot with stateful executor and process manager."""
 
 import sys
 import time
 import os
 import traceback
+import glob
 from datetime import datetime
 
 from .config import BotConfig
@@ -12,27 +13,39 @@ from .handler import BaleBotHandler
 
 
 def setup_environment():
+    """Ensure /tmp directory exists and log startup."""
     os.makedirs("/tmp", exist_ok=True)
     with open("/tmp/bale-bot-startup.log", "w") as f:
-        f.write(f"Bot started at {datetime.now().isoformat()}\nPython: {sys.version}\nPID: {os.getpid()}\n")
+        f.write(f"Bot started at {datetime.now().isoformat()}\n")
+        f.write(f"Python: {sys.version}\n")
+        f.write(f"PID: {os.getpid()}\n")
+
 
 def cleanup_old_files():
-    import glob
-    patterns = ["/tmp/bale_output_*.txt", "/tmp/command-output-*.txt"]
+    patterns = [
+        "/tmp/bale_output_*.txt",
+        "/tmp/command-output-*.txt",
+        "/tmp/bale_download_*",
+        "/tmp/*.part*",           # قطعات split
+        "/tmp/*.zip"              # فایل‌های zip موقت
+    ]
     now = time.time()
     for pattern in patterns:
-        for f in glob.glob(pattern):
+        for filepath in glob.glob(pattern):
             try:
-                if now - os.path.getmtime(f) > 3600:
-                    os.unlink(f)
+                if now - os.path.getmtime(filepath) > 3600:
+                    os.unlink(filepath)
             except Exception:
                 pass
 
 def log(msg: str):
+    """Print message with flush."""
     print(msg, flush=True)
 
+
 def main():
-    log("🤖 Bale SSH Bot starting (stateful executor)...")
+    """Main bot loop."""
+    log("🤖 Bale SSH Bot starting (stateful executor + process manager)...")
     setup_environment()
     cleanup_old_files()
 
@@ -44,13 +57,13 @@ def main():
         sys.exit(1)
 
     handler = BaleBotHandler(config)
-    log("✅ Bot handler initialized with stateful executor")
-    
+    log("✅ Bot handler initialized with process manager")
+
     # Start from latest updates, ignore old history
     offset = 0
     current_time = time.time()
-    log(f"📝 Starting with offset {offset}, ignoring messages older than 30 seconds")
-    
+    log("📝 Starting with offset 0, ignoring messages older than 30 seconds")
+
     processed = 0
     stop_requested = False
 
@@ -103,18 +116,31 @@ def main():
                 if file_path and os.path.exists(file_path):
                     handler.send_file(file_path, f"Output for: {text[:100]}")
                     os.unlink(file_path)
+
                 processed += 1
                 log(f"✅ Response sent (total processed: {processed})")
 
+                # Clean up old jobs and temporary files every 10 commands
+                if processed % 10 == 0:
+                    handler.process_manager.cleanup_old()
+                    cleanup_old_files()
+
             handler.save_offset(offset)
+
+        except KeyboardInterrupt:
+            log("⚠️ Received interrupt, stopping...")
+            break
         except Exception as e:
             log(f"❌ Unexpected error in main loop: {e}")
             traceback.print_exc(file=sys.stdout)
             time.sleep(5)
 
+    # Final cleanup
     handler.close()
+    cleanup_old_files()
     log(f"\n📊 Summary: processed {processed} commands. Bot stopped.")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
