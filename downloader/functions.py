@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import yt_dlp as youtube_dl   # ← استفاده صحیح از yt-dlp
+import yt_dlp as youtube_dl
 import requests
 import sys
 import urllib.parse as urlparse
@@ -12,7 +12,6 @@ from bs4 import BeautifulSoup
 
 # Database location
 database = "./database.db"
-
 
 # CHECKINGS
 def type_check(item):
@@ -32,17 +31,15 @@ def type_check(item):
         how_to_use("Not a valid type.")
         sys.exit()
 
-
 def ph_url_check(url):
     parsed = urlparse.urlparse(url)
     regions = ["www", "cn", "cz", "de", "es", "fr", "it", "nl", "jp", "pt", "pl", "rt"]
     for region in regions:
-        if parsed.netloc == region + ".pornhub.com":
-            print("pornhub url validated.")
+        if parsed.netloc == region + ".alibaba.com":
+            print("alibaba url validated.")
             return
-    print("This is not a pornhub url.")
+    print("This is not a alibaba url.")
     sys.exit()
-
 
 def ph_type_check(url):
     parsed = urlparse.urlparse(url)
@@ -63,7 +60,6 @@ def ph_type_check(url):
         print("Somethings wrong with the url. Please check it out.")
         sys.exit()
 
-
 def ph_alive_check(url):
     requested = requests.get(url)
     if requested.status_code == 200:
@@ -71,7 +67,6 @@ def ph_alive_check(url):
     else:
         print("but the URL does not exist.")
         sys.exit()
-
 
 def add_check(name_check):
     if name_check == "batch":
@@ -83,10 +78,8 @@ def add_check(name_check):
                 for line in input_file:
                     line = line.strip()
                     add_item(line)
-
     else:
         add_item(name_check)
-
 
 def get_item_name(item_type, url_item):
     url = url_item
@@ -114,9 +107,7 @@ def get_item_name(item_type, url_item):
 
     return title
 
-
 ##################################### DOWNLOADING
-
 
 def dl_all_items(conn):
     c = conn.cursor()
@@ -131,8 +122,6 @@ def dl_all_items(conn):
     for row in rows:
         if row[1] == "model":
             url_after = "/videos/upload"
-        # elif row[1] == "pornstar":
-        #     url_after = "/"
         elif row[1] == "users":
             url_after = "/videos/public"
         elif row[1] == "channels":
@@ -143,10 +132,9 @@ def dl_all_items(conn):
         print("-----------------------------")
         print(row[1])
         print(row[2])
-        print("https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
+        print("https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
         print("-----------------------------")
 
-        # Find more available options here: https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L129-L279
         outtmpl = get_dl_location('DownloadLocation') + '/' + str(row[1]) + '/' + str(row[3]) + '/%(title)s.%(ext)s'
         ydl_opts_start = {
             'format': 'best',
@@ -158,7 +146,7 @@ def dl_all_items(conn):
             'ignoreerrors': True,
         }
 
-        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2] + url_after)
+        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2] + url_after)
         with youtube_dl.YoutubeDL(ydl_opts_start) as ydl:
             ydl.download([url])
 
@@ -168,7 +156,6 @@ def dl_all_items(conn):
         except Error as e:
             print(e)
             sys.exit()
-
 
 def dl_all_new_items(conn):
     c = conn.cursor()
@@ -181,11 +168,8 @@ def dl_all_new_items(conn):
     rows = c.fetchall()
 
     for row in rows:
-
         if str(row[1]) == "model":
             url_after = "/videos/upload"
-        # elif str(row[1]) == "pornstar":
-        #     url_after = "/videos"
         elif str(row[1]) == "users":
             url_after = "/videos/public"
         elif str(row[1]) == "channels":
@@ -196,10 +180,9 @@ def dl_all_new_items(conn):
         print("-----------------------------")
         print(row[1])
         print(row[2])
-        print("https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
+        print("https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
         print("-----------------------------")
 
-        # Find more available options here: https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L129-L279
         outtmpl = get_dl_location('DownloadLocation') + '/' + str(row[1]) + '/' + str(row[3]) + '/%(title)s.%(ext)s'
         ydl_opts = {
             'format': 'best',
@@ -209,7 +192,7 @@ def dl_all_new_items(conn):
             'ignoreerrors': True,
         }
 
-        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after
+        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -220,7 +203,6 @@ def dl_all_new_items(conn):
             print(e)
             sys.exit()
 
-
 def dl_start():
     conn = create_connection(database)
     with conn:
@@ -228,7 +210,6 @@ def dl_start():
         dl_all_new_items(conn)
         print("downloading all items")
         dl_all_items(conn)
-
 
 def custom_dl(name_check):
     if name_check == "batch":
@@ -240,10 +221,8 @@ def custom_dl(name_check):
                 for line in input_file:
                     line = line.strip()
                     custom_dl_download(line)
-
     else:
         custom_dl_download(name_check)
-
 
 def custom_dl_download(url):
     ph_url_check(url)
@@ -260,7 +239,6 @@ def custom_dl_download(url):
 
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-
 
 def add_item(name_check):
     parsed = urlparse.urlparse(name_check)
@@ -288,7 +266,6 @@ def add_item(name_check):
     else:
         print("Item already exists in database")
 
-
 ##################################### DATABASE ORIENTED
 
 def create_connection(db_file):
@@ -299,14 +276,12 @@ def create_connection(db_file):
         print(e)
     return conn
 
-
 def create_item(conn, item):
     sql = ''' INSERT INTO ph_items(type,url_name,name,new)
               VALUES(?,?,?,?) '''
     c = conn.cursor()
     c.execute(sql, item)
     return c.lastrowid
-
 
 def select_all_items(conn, item):
     c = conn.cursor()
@@ -325,10 +300,9 @@ def select_all_items(conn, item):
     t.align['Last checked'] = "l"
     t.align['Url'] = "l"
     for row in rows:
-        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2])
+        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2])
         t.add_row([row[0], row[3], row[1], row[5], row[6], url])
     print(t)
-
 
 def list_items(item):
     conn = create_connection(database)
@@ -336,19 +310,16 @@ def list_items(item):
         print("Listing items from database:")
         select_all_items(conn, item)
 
-
 def delete_single_item(conn, id):
     sql = 'DELETE FROM ph_items WHERE id=?'
     c = conn.cursor()
     c.execute(sql, (id,))
     conn.commit()
 
-
 def delete_item(item_id):
     conn = create_connection(database)
     with conn:
         delete_single_item(conn, item_id)
-
 
 def create_config(conn, item):
     sql = ''' INSERT INTO ph_settings(option, setting)
@@ -357,29 +328,55 @@ def create_config(conn, item):
     c.execute(sql, item)
     return c.lastrowid
 
-
 def prepare_config():
+    """Setup download location - works in both interactive and non-interactive environments"""
     conn = create_connection(database)
-    u_input = input("Please enter the FULL PATH to your download location: ")
+    
+    # Check if running in GitHub Actions
+    is_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+    
+    if is_github_actions:
+        # Use default path for GitHub Actions
+        download_path = os.path.join(os.getcwd(), "downloads")
+        os.makedirs(download_path, exist_ok=True)
+        u_input = download_path
+        print(f"Using default download location: {u_input}")
+    else:
+        # Interactive mode - ask user
+        u_input = input("Please enter the FULL PATH to your download location: ")
+    
     with conn:
-        item = ('DownloadLocation', u_input)
-        item_id = create_config(conn, item)
-
+        # Check if setting already exists
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM ph_settings WHERE option='DownloadLocation'")
+        count = c.fetchone()[0]
+        if count == 0:
+            item = ('DownloadLocation', u_input)
+            create_config(conn, item)
+            print(f"Download location set to: {u_input}")
+        else:
+            print("Download location already configured.")
 
 def get_dl_location(option):
+    """Get download location from database or return default path"""
     conn = create_connection(database)
     if conn is not None:
         c = conn.cursor()
-        c.execute("SELECT * FROM ph_settings WHERE option='" + option + "'")
-        rows = c.fetchall()
-        for row in rows:
-            dllocation = row[2]
-        return dllocation
+        c.execute("SELECT setting FROM ph_settings WHERE option=?", (option,))
+        row = c.fetchone()
+        if row:
+            return row[0]
+        else:
+            # Return default path if setting doesn't exist
+            default_path = os.path.join(os.getcwd(), "downloads")
+            os.makedirs(default_path, exist_ok=True)
+            return default_path
     else:
-        print("Error! somethings wrong with the query.")
-
+        print("Error! something's wrong with the query.")
+        return "./downloads"
 
 def check_for_database():
+    """Check if database exists and initialize if needed"""
     print("Running startup checks...")
     if os.path.exists(database):
         print("Database exists.")
@@ -387,7 +384,6 @@ def check_for_database():
         print("Database does not exist.")
         print("Looks like this is your first time run...")
         first_run()
-
 
 def create_table(conn, create_table_sql):
     try:
@@ -397,8 +393,8 @@ def create_table(conn, create_table_sql):
     except Error as e:
         print(e)
 
-
 def create_tables():
+    """Create database tables on first run"""
     sql_create_items_table = """ CREATE TABLE IF NOT EXISTS ph_items (
                                         id integer PRIMARY KEY,
                                         type text,
@@ -416,27 +412,20 @@ def create_tables():
                                         datecreated DATETIME DEFAULT CURRENT_TIMESTAMP
                                     ); """
 
-    # create a database connection
     conn = create_connection(database)
 
-    # create tables
     if conn is not None:
-        # create items table
         create_table(conn, sql_create_items_table)
         create_table(conn, sql_create_settings_table)
         prepare_config()
     else:
         print("Error! cannot create the database connection.")
 
-
-##################################### Lets do it baby
-
 def first_run():
+    """Initialize everything on first run"""
     create_tables()
 
-
 ##################################### MESSAGING
-
 
 def how_to_use(error):
     print("Error: " + error)
@@ -446,12 +435,11 @@ def how_to_use(error):
     t.align['command'] = "l"
     t.align['item'] = "l"
     t.add_row(['dl', 'start', ''])
-    t.add_row(['dl', 'custom', 'url (full pornhub url) | batch (for .txt file)'])
+    t.add_row(['dl', 'custom', 'url (full alibaba url) | batch (for .txt file)'])
     t.add_row(['dl', 'add', 'model | pornstar | channel | user | playlist | batch (for .txt file)'])
     t.add_row(['dl', 'list', 'model | pornstar | channel | user | playlist | all'])
     t.add_row(['dl', 'delete', 'model | pornstar | channel | user | playlist'])
     print(t)
-
 
 def help_command():
     print("------------------------------------------------------------------")
@@ -461,11 +449,11 @@ def help_command():
     t.align['argument'] = "l"
     t.align['description'] = "l"
     t.add_row(['start', '', 'start the script'])
-    t.add_row(['custom', 'url | batch', 'download a single video from pornhub'])
+    t.add_row(['custom', 'url | batch', 'download a single video from alibaba'])
     t.add_row(
         ['add', 'model | pornstar | channel | user | playlist | batch (for .txt file)', 'adding item to database'])
     t.add_row(['list', 'model | pornstar | channel | user | playlist', 'list selected items from database'])
     t.add_row(['delete', 'model | pornstar | channel | user | playlist', 'delete selected items from database'])
     print(t)
-    print("Example: dl add pornhub-url")
+    print("Example: dl add alibaba-url")
     print("------------------------------------------------------------------")
