@@ -4,3 +4,4 @@ lxml==4.9.3
 prettytable==3.9.0
 requests==2.31.0
 yt-dlp==2024.12.23
+python-dotenv>=1.0.0
