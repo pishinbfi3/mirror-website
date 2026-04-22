@@ -31,37 +31,18 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 def ensure_database_ready():
     db_path = WORKDIR / "database.db"
-
-    if db_path.exists():
-        return
-
-    print(">>> Creating fresh phdler database ...")
-
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-
-    # Create CONFIG table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS CONFIG (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-
-    # Insert download paths
-    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('DownloadLocation', ?)", (str(DOWNLOAD_DIR),))
-    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('ModelLocation', ?)", (str(DOWNLOAD_DIR / 'models'),))
-    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('PornstarLocation', ?)", (str(DOWNLOAD_DIR / 'pornstars'),))
-    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('ChannelLocation', ?)", (str(DOWNLOAD_DIR / 'channels'),))
-
-    conn.commit()
-    conn.close()
-
-    # -----------------------------------------------
-    # VERY IMPORTANT: Let phdler.py create its tables
-    # -----------------------------------------------
-    code, out = run_phdler(["start"])
-    print(">>> First table-generation run result:", out)
+    if not db_path.exists():
+        # اگر دیتابیس وجود ندارد
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS ph_items (id INTEGER PRIMARY KEY, url TEXT, title TEXT, views INTEGER, likes INTEGER, dislikes INTEGER, duration INTEGER, added TEXT, model TEXT, pornstar TEXT, channel TEXT)")
+        cur.execute("CREATE TABLE IF NOT EXISTS ph_videos (id INTEGER PRIMARY KEY, url TEXT, title TEXT, views INTEGER, likes INTEGER, dislikes INTEGER, duration INTEGER, added TEXT, model TEXT, pornstar TEXT, channel TEXT)")
+        cur.execute("CREATE TABLE IF NOT EXISTS ph_models (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
+        cur.execute("CREATE TABLE IF NOT EXISTS ph_pornstars (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
+        cur.execute("CREATE TABLE IF NOT EXISTS ph_channels (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
+        conn.commit()
+        conn.close()
+        run_phdler(["start"])
 
 # ---------------------------------------------------------
 # 2) API functions
