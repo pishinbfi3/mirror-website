@@ -209,13 +209,17 @@ class BaleBotHandler:
         # Built-in commands
         if base_cmd == "/stop":
             return "🛑 Stopping bot..."
+        elif base_cmd == "/start":
+            # Same as /help
+            return self._get_help_text()
+        elif base_cmd == "/help":
+            return self._get_help_text()
         elif base_cmd == "/download":
             if len(cmd_parts) < 2:
                 return "❌ Usage: `/download <filepath>`"
             filepath = cmd_parts[1]
             if not os.path.exists(filepath):
                 return f"❌ File not found: {filepath}"
-            # Send file with auto-splitting
             if self.split_and_send_file(filepath, os.path.basename(filepath)):
                 return f"✅ Sending `{filepath}` (split if >10MB)"
             else:
@@ -231,7 +235,6 @@ class BaleBotHandler:
             try:
                 with open(filepath, 'r') as f:
                     content = f.read()
-                # Send content in a code block
                 msg = f"📝 Editing `{filepath}`\nSend `/save {filepath}` with the new content (in a single message).\nCurrent content:\n```\n{content[:3000]}\n```"
                 if len(content) > 3000:
                     msg += f"\n... (truncated, {len(content)} total chars)"
@@ -242,7 +245,6 @@ class BaleBotHandler:
             if len(cmd_parts) < 2:
                 return "❌ Usage: `/save <filepath>` followed by the new content (in the same message or next message)."
             filepath = cmd_parts[1]
-            # Extract content from the rest of the message
             content = ' '.join(cmd_parts[2:]) if len(cmd_parts) > 2 else ""
             if not content:
                 return "❌ Please provide the new content after the command."
@@ -255,9 +257,7 @@ class BaleBotHandler:
         elif base_cmd == "/cd":
             if len(cmd_parts) < 2:
                 return "❌ Usage: `/cd <directory>`"
-            # Change directory in persistent shell
             self.shell.execute(f"cd {cmd_parts[1]}")
-            # Verify
             _, pwd, _, _ = self.shell.execute("pwd")
             return f"📂 Current directory: `{pwd.strip()}`"
         elif base_cmd == "/pwd":
@@ -281,22 +281,24 @@ class BaleBotHandler:
             _, out, _, _ = self.shell.execute("free -h")
             return f"**🧠 Memory**\n```\n{out}\n```"
         else:
-            # Default help
             return self._get_help_text()
 
     def _get_help_text(self) -> str:
         return """**🔓 UNRESTRICTED BOT – Enhanced Commands**
 
 **Shell:** Any command runs in persistent session (cd, env vars preserved).
+
 **Files:**
 • `/download <path>` – download file (auto-split >10MB)
 • `/upload` – send a document to upload to current dir
 • `/edit <file>` – view file content
 • `/save <file> <content>` – save/replace file
+
 **Session:**
 • `/cd <dir>` – change directory
 • `/pwd` – show current dir
 • `/stop` – stop bot
+
 **Info:**
 • `/info` – detailed system info
 • `/ps` – top processes
@@ -304,7 +306,9 @@ class BaleBotHandler:
 • `/netstat` – open ports
 • `/uptime` – system uptime
 • `/mem` – memory usage
-• `/help` – this help"""
+
+• `/help` – this help
+"""
 
     def _get_system_info(self) -> str:
         """Return extensive system information."""
