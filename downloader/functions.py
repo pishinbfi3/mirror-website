@@ -37,10 +37,10 @@ def ph_url_check(url):
     parsed = urlparse.urlparse(url)
     regions = ["www", "cn", "cz", "de", "es", "fr", "it", "nl", "jp", "pt", "pl", "rt"]
     for region in regions:
-        if parsed.netloc == region + ".alibaba.com":
-            print("alibaba url validated.")
+        if parsed.netloc == region + ".pornhub.com":
+            print("pornhub url validated.")
             return
-    print("This is not a alibaba url.")
+    print("This is not a pornhub url.")
     sys.exit()
 
 
@@ -143,7 +143,7 @@ def dl_all_items(conn):
         print("-----------------------------")
         print(row[1])
         print(row[2])
-        print("https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
+        print("https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
         print("-----------------------------")
 
         # Find more available options here: https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L129-L279
@@ -158,7 +158,7 @@ def dl_all_items(conn):
             'ignoreerrors': True,
         }
 
-        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2] + url_after)
+        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2] + url_after)
         with youtube_dl.YoutubeDL(ydl_opts_start) as ydl:
             ydl.download([url])
 
@@ -196,7 +196,7 @@ def dl_all_new_items(conn):
         print("-----------------------------")
         print(row[1])
         print(row[2])
-        print("https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
+        print("https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after)
         print("-----------------------------")
 
         # Find more available options here: https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L129-L279
@@ -209,7 +209,7 @@ def dl_all_new_items(conn):
             'ignoreerrors': True,
         }
 
-        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2]) + url_after
+        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2]) + url_after
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -325,7 +325,7 @@ def select_all_items(conn, item):
     t.align['Last checked'] = "l"
     t.align['Url'] = "l"
     for row in rows:
-        url = "https://www.alibaba.com/" + str(row[1]) + "/" + str(row[2])
+        url = "https://www.pornhub.com/" + str(row[1]) + "/" + str(row[2])
         t.add_row([row[0], row[3], row[1], row[5], row[6], url])
     print(t)
 
@@ -446,7 +446,7 @@ def how_to_use(error):
     t.align['command'] = "l"
     t.align['item'] = "l"
     t.add_row(['dl', 'start', ''])
-    t.add_row(['dl', 'custom', 'url (full alibaba url) | batch (for .txt file)'])
+    t.add_row(['dl', 'custom', 'url (full pornhub url) | batch (for .txt file)'])
     t.add_row(['dl', 'add', 'model | pornstar | channel | user | playlist | batch (for .txt file)'])
     t.add_row(['dl', 'list', 'model | pornstar | channel | user | playlist | all'])
     t.add_row(['dl', 'delete', 'model | pornstar | channel | user | playlist'])
@@ -461,11 +461,11 @@ def help_command():
     t.align['argument'] = "l"
     t.align['description'] = "l"
     t.add_row(['start', '', 'start the script'])
-    t.add_row(['custom', 'url | batch', 'download a single video from alibaba'])
+    t.add_row(['custom', 'url | batch', 'download a single video from pornhub'])
     t.add_row(
         ['add', 'model | pornstar | channel | user | playlist | batch (for .txt file)', 'adding item to database'])
     t.add_row(['list', 'model | pornstar | channel | user | playlist', 'list selected items from database'])
     t.add_row(['delete', 'model | pornstar | channel | user | playlist', 'delete selected items from database'])
     print(t)
-    print("Example: dl add alibaba-url")
+    print("Example: dl add pornhub-url")
     print("------------------------------------------------------------------")
