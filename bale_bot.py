@@ -31,18 +31,79 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 def ensure_database_ready():
     db_path = WORKDIR / "database.db"
-    if not db_path.exists():
-        # اگر دیتابیس وجود ندارد
+
+    if db_path.exists():
+        # بررسی وجود جداول ضروری و در صورت نبود، ایجاد آنها
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS ph_items (id INTEGER PRIMARY KEY, url TEXT, title TEXT, views INTEGER, likes INTEGER, dislikes INTEGER, duration INTEGER, added TEXT, model TEXT, pornstar TEXT, channel TEXT)")
-        cur.execute("CREATE TABLE IF NOT EXISTS ph_videos (id INTEGER PRIMARY KEY, url TEXT, title TEXT, views INTEGER, likes INTEGER, dislikes INTEGER, duration INTEGER, added TEXT, model TEXT, pornstar TEXT, channel TEXT)")
-        cur.execute("CREATE TABLE IF NOT EXISTS ph_models (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
-        cur.execute("CREATE TABLE IF NOT EXISTS ph_pornstars (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
-        cur.execute("CREATE TABLE IF NOT EXISTS ph_channels (id INTEGER PRIMARY KEY, name TEXT, url TEXT)")
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ph_items'")
+        if not cur.fetchone():
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ph_items (
+                    id integer PRIMARY KEY,
+                    type text,
+                    url_name text,
+                    name text,
+                    new integer DEFAULT 1,
+                    datecreated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    lastchecked DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ph_settings'")
+        if not cur.fetchone():
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ph_settings (
+                    id integer PRIMARY KEY,
+                    option text,
+                    setting text,
+                    datecreated DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("INSERT INTO ph_settings (option, setting) VALUES ('DownloadLocation', ?)", (str(DOWNLOAD_DIR),))
         conn.commit()
         conn.close()
-        run_phdler(["start"])
+        return
+
+    print(">>> Creating fresh phdler database ...")
+
+    # ایجاد دیتابیس جدید
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    # جدول آیتم‌ها
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ph_items (
+            id integer PRIMARY KEY,
+            type text,
+            url_name text,
+            name text,
+            new integer DEFAULT 1,
+            datecreated DATETIME DEFAULT CURRENT_TIMESTAMP,
+            lastchecked DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # جدول تنظیمات
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ph_settings (
+            id integer PRIMARY KEY,
+            option text,
+            setting text,
+            datecreated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # ذخیره مسیر دانلود
+    cur.execute("INSERT INTO ph_settings (option, setting) VALUES ('DownloadLocation', ?)", (str(DOWNLOAD_DIR),))
+
+    conn.commit()
+    conn.close()
+
+    # ایجاد زیرپوشه‌های ضروری
+    (DOWNLOAD_DIR / "models").mkdir(parents=True, exist_ok=True)
+    (DOWNLOAD_DIR / "pornstars").mkdir(parents=True, exist_ok=True)
+    (DOWNLOAD_DIR / "channels").mkdir(parents=True, exist_ok=True)
+    (DOWNLOAD_DIR / "handpicked").mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------
 # 2) API functions
