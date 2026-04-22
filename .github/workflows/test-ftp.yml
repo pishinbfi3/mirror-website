@@ -6,36 +6,88 @@ on:
 jobs:
   test-ftp:
     runs-on: ubuntu-latest
-    outputs:
-      ftp_message: ${{ steps.ftp_test.outputs.ftp_message }}
-      ftp_success: ${{ steps.ftp_test.outputs.ftp_success }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Install lftp
-        run: sudo apt-get update && sudo apt-get install -y lftp
+        id: install
+        run: |
+          sudo apt-get update && sudo apt-get install -y lftp 2>&1 | tee install.log
+          if [ $? -ne 0 ]; then
+            echo "install_failed=true" >> $GITHUB_OUTPUT
+            echo "install_error=$(cat install.log | tail -20)" >> $GITHUB_OUTPUT
+          else
+            echo "install_failed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Test FTP Connection
         id: ftp_test
+        continue-on-error: true
         run: |
-          # تست اتصال FTP
-          if lftp -c "open -u ${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }} ftp://${{ secrets.FTP_SERVER }}:21; ls" > ftp_list.txt 2>&1; then
+          # تست اتصال FTP با ذخیره کامل خطاها
+          echo "=== تست اتصال FTP ===" > ftp_result.txt
+          echo "سرور: ${{ vars.FTP_SERVER }}" >> ftp_result.txt
+          echo "کاربر: ${{ vars.FTP_USERNAME }}" >> ftp_result.txt
+          echo "زمان: $(date)" >> ftp_result.txt
+          echo "" >> ftp_result.txt
+          
+          if lftp -c "open -u ${{ vars.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }} ftp://${{ vars.FTP_SERVER }}:21; ls" > ftp_list.txt 2>&1; then
             FILE_COUNT=$(wc -l < ftp_list.txt)
+            echo "✅ اتصال FTP با موفقیت برقرار شد!" >> ftp_result.txt
+            echo "📁 تعداد فایل‌ها: $FILE_COUNT" >> ftp_result.txt
+            echo "" >> ftp_result.txt
+            echo "لیست فایل‌ها (10 فایل اول):" >> ftp_result.txt
+            head -10 ftp_list.txt >> ftp_result.txt
             echo "ftp_success=true" >> $GITHUB_OUTPUT
-            echo "ftp_message=✅ اتصال FTP با موفقیت برقرار شد!\\n📁 تعداد فایل‌ها: $FILE_COUNT\\n🖥 سرور: ${{ secrets.FTP_SERVER }}" >> $GITHUB_OUTPUT
           else
-            ERROR_MSG=$(cat ftp_list.txt 2>/dev/null || echo "خطای ناشناخته")
+            echo "❌ اتصال FTP ناموفق بود!" >> ftp_result.txt
+            echo "" >> ftp_result.txt
+            echo "جزئیات خطا:" >> ftp_result.txt
+            cat ftp_list.txt >> ftp_result.txt
             echo "ftp_success=false" >> $GITHUB_OUTPUT
-            echo "ftp_message=❌ اتصال FTP ناموفق بود!\\n🔍 خطا: $ERROR_MSG\\n🖥 سرور: ${{ secrets.FTP_SERVER }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send result to Bale
+      - name: Capture any workflow error
+        id: error_catch
+        if: failure()
         run: |
-          MESSAGE="📡 *گزارش تست FTP*\\n\\n"
-          MESSAGE="$MESSAGE${{ steps.ftp_test.outputs.ftp_message }}\\n\\n"
-          MESSAGE="$MESSAGE⏰ زمان: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "❌ خطا در اجرای workflow!" > error_result.txt
+          echo "لطفا لاگ‌ها را بررسی کنید." >> error_result.txt
+          echo "workflow_failed=true" >> $GITHUB_OUTPUT
+
+      - name: Send result to Bale (Always)
+        if: always()  # این خط باعث می‌شود حتی با خطا هم اجرا شود
+        run: |
+          # تعیین منبع پیام
+          if [ -f error_result.txt ]; then
+            MESSAGE_TEXT=$(cat error_result.txt)
+          elif [ -f ftp_result.txt ]; then
+            MESSAGE_TEXT=$(cat ftp_result.txt)
+          else
+            MESSAGE_TEXT="❌ خطای ناشناخته در اجرای workflow"
+          fi
           
+          # ساخت پیام نهایی
+          MESSAGE="📡 *گزارش تست FTP*%0A%0A"
+          MESSAGE="$MESSAGE$(echo "$MESSAGE_TEXT" | sed 's/$/%0A/g' | sed 's/\\\\n/%0A/g' | tr -d '\n\r')"
+          MESSAGE="$MESSAGE%0A%0A🆔 شناسه اجرا: ${{ github.run_id }}"
+          
+          # ارسال به بله
           curl -X POST "https://tapi.bale.ai/bot${{ secrets.BALE_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${{ secrets.BALE_CHAT_ID }}\", \"text\":\"$MESSAGE\", \"parse_mode\":\"Markdown\"}"
+            -d "{\"chat_id\":\"${{ secrets.BALE_CHAT_ID }}\", \"text\":\"$MESSAGE\", \"parse_mode\":\"Markdown\"}" \
+            || echo "ارسال پیام به بله با خطا مواجه شد"
+          
+          # همچنین لاگ خطا را چاپ می‌کند
+          echo "پیام ارسال شد به بله"
+
+      - name: Upload logs as artifact (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftp-test-logs
+          path: |
+            *.txt
+            *.log
+          retention-days: 7
