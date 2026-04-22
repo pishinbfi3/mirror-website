@@ -36,9 +36,10 @@ TOKEN = os.getenv("BALE_BOT_TOKEN")
 CHAT_ID = os.getenv("BALE_CHAT_ID")  # optional – restricts bot to a chat
 ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "true").lower() == "true"
 
-# Path to the downloader directory – assumed to be the current working
-# directory when the bot is started. ``phdler.py`` resides here.
-DOWNLOADER_DIR = Path.cwd()
+# Path to the downloader directory – the original project is cloned into a
+# subdirectory named ``PornHub-downloader-python-master``. ``phdler.py`` lives
+# inside that folder.
+DOWNLOADER_DIR = Path.cwd() / "PornHub-downloader-python-master"
 PHDLER_SCRIPT = DOWNLOADER_DIR / "phdler.py"
 
 LOG_DIR = DOWNLOADER_DIR / "logs"
