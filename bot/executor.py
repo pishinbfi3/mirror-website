@@ -1,4 +1,4 @@
-"""Command executor with manual state tracking (no persistent shell hang)."""
+"""Command executor with manual state tracking – cd handled internally."""
 
 import subprocess
 import os
@@ -16,28 +16,29 @@ class CommandExecutor:
         self.max_output_size = max_output_size
         self.current_dir = os.getcwd()  # start in the repo root
         self.env = os.environ.copy()
-        # Ensure PATH is safe
         self.env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
     def execute(self, command: str) -> Tuple[int, str, str, float]:
         """
-        Execute a command, optionally prefixing with cd to current_dir.
-        Returns (exit_code, stdout, stderr, execution_time).
+        Execute a command.
+        For `cd` commands, we change the internal directory without running a subprocess.
+        For other commands, we prefix with `cd '{current_dir}' &&` to preserve state.
         """
         start_time = time.time()
-        stdout = ""
-        stderr = ""
-        exit_code = -1
+        cmd_stripped = command.strip()
 
-        # If command is not a cd command, and we have a current_dir set, prefix it
+        # Handle cd command internally
+        if cmd_stripped.startswith('cd '):
+            return self._handle_cd(cmd_stripped, start_time)
+
+        # For any other command, run in a subprocess with current directory prefix
         final_command = command
-        if not command.strip().startswith("cd ") and self.current_dir:
+        if self.current_dir:
             # Escape single quotes in directory name
             safe_dir = self.current_dir.replace("'", "'\\''")
             final_command = f"cd '{safe_dir}' && {command}"
 
         try:
-            # Use a temporary file to capture output (avoids pipe deadlocks)
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.out', delete=False) as out_f, \
                  tempfile.NamedTemporaryFile(mode='w+', suffix='.err', delete=False) as err_f:
 
@@ -48,7 +49,7 @@ class CommandExecutor:
                     stdout=out_f,
                     stderr=err_f,
                     env=self.env,
-                    cwd="/",  # we use explicit cd in command, so cwd doesn't matter
+                    cwd="/",  # we use explicit cd, so cwd doesn't matter
                     text=True
                 )
 
@@ -60,7 +61,6 @@ class CommandExecutor:
                     stderr = f"Command timed out after {self.timeout} seconds"
                     exit_code = -1
 
-                # Read output files
                 with open(out_f.name, 'r') as f:
                     stdout = f.read(self.max_output_size)
                     if len(stdout) == self.max_output_size:
@@ -77,27 +77,42 @@ class CommandExecutor:
             stderr = f"Execution error: {str(e)}"
             exit_code = -1
 
-        # If the command was a cd command (successful), update current_dir
-        if command.strip().startswith("cd ") and exit_code == 0:
-            # Extract the target directory (handles quotes, ~, etc.)
-            # We'll re-run a pwd to get the actual directory after cd
-            pwd_proc = subprocess.run(
-                "pwd", shell=True, capture_output=True, text=True, env=self.env, timeout=5
-            )
-            if pwd_proc.returncode == 0:
-                self.current_dir = pwd_proc.stdout.strip()
-
         execution_time = time.time() - start_time
         self._save_output(command, exit_code, stdout, stderr, execution_time)
         return exit_code, stdout, stderr, execution_time
 
+    def _handle_cd(self, command: str, start_time: float) -> Tuple[int, str, str, float]:
+        """Handle cd command without subprocess."""
+        # Extract target directory (remove 'cd ' and strip quotes)
+        target = command[3:].strip()
+        target = target.strip("'\"")
+        if not target:
+            return 1, "", "cd: missing directory", 0.0
+
+        # Resolve relative to current_dir
+        if target.startswith('/'):
+            new_dir = target
+        else:
+            new_dir = os.path.join(self.current_dir, target)
+        new_dir = os.path.abspath(new_dir)
+
+        if os.path.isdir(new_dir):
+            self.current_dir = new_dir
+            execution_time = time.time() - start_time
+            return 0, f"Changed directory to {self.current_dir}", "", execution_time
+        else:
+            execution_time = time.time() - start_time
+            return 1, "", f"cd: {target}: No such file or directory", execution_time
+
     def set_directory(self, path: str) -> bool:
         """Change the current working directory (manual state update)."""
-        # Validate the directory exists
-        test_cmd = f"cd '{path}' 2>/dev/null && pwd"
-        proc = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            self.current_dir = proc.stdout.strip()
+        if os.path.isdir(path):
+            self.current_dir = os.path.abspath(path)
+            return True
+        # Try relative to current_dir
+        test_path = os.path.join(self.current_dir, path)
+        if os.path.isdir(test_path):
+            self.current_dir = test_path
             return True
         return False
 
