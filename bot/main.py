@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main entry point for Bale SSH Bot with stateful executor."""
+"""Main entry point for Bale SSH Bot with stateful executor and message age filter."""
 
 import sys
 import time
@@ -45,9 +45,12 @@ def main():
 
     handler = BaleBotHandler(config)
     log("✅ Bot handler initialized with stateful executor")
-    offset = handler.get_offset()
-    log(f"📝 Last offset: {offset}")
-
+    
+    # Start from latest updates, ignore old history
+    offset = 0
+    current_time = time.time()
+    log(f"📝 Starting with offset {offset}, ignoring messages older than 30 seconds")
+    
     processed = 0
     stop_requested = False
 
@@ -64,6 +67,12 @@ def main():
 
                 message = update.get("message") or update.get("edited_message")
                 if not message:
+                    continue
+
+                # Ignore messages older than 30 seconds
+                msg_date = message.get("date", 0)
+                if current_time - msg_date > 30:
+                    log(f"⏭️ Skipping old message from {datetime.fromtimestamp(msg_date)}")
                     continue
 
                 chat = message.get("chat", {})
