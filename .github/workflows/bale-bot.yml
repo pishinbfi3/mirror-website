@@ -9,8 +9,8 @@ jobs:
     env:
       BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
       BALE_CHAT_ID: ${{ secrets.BALE_CHAT_ID }}
-      ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}
-      ENABLE_FTP: ${{ secrets.ENABLE_FTP }}
+      ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM || 'true' }}
+      ENABLE_FTP: ${{ secrets.ENABLE_FTP || 'false' }}
 
     steps:
       - name: Checkout repository (bot code + downloader)
