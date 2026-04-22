@@ -135,3 +135,8 @@ class CommandExecutor:
                 f.write(stderr if stderr else "(empty)\n")
         except Exception:
             pass
+
+    def execute_background(self, command: str, timeout: int = 300):
+        """Returns a job_id for background execution."""
+        from .process_manager import ProcessManager
+        return self.process_manager.submit(command, timeout)
