@@ -1,120 +1,137 @@
-#!/usr/bin/env python3
-"""Main entry point for Bale SSH Bot with stateful executor and message age filter."""
+"""Command executor with manual state tracking – cd handled internally."""
 
-import sys
-import time
+import subprocess
 import os
-import traceback
+import time
+import tempfile
+from typing import Tuple, Optional
 from datetime import datetime
 
-from .config import BotConfig
-from .handler import BaleBotHandler
 
+class CommandExecutor:
+    """Executes commands with manual state tracking (cwd, env)."""
 
-def setup_environment():
-    os.makedirs("/tmp", exist_ok=True)
-    with open("/tmp/bale-bot-startup.log", "w") as f:
-        f.write(f"Bot started at {datetime.now().isoformat()}\nPython: {sys.version}\nPID: {os.getpid()}\n")
+    def __init__(self, timeout: int = 300, max_output_size: int = 1_000_000):
+        self.timeout = timeout
+        self.max_output_size = max_output_size
+        self.current_dir = os.getcwd()  # start in the repo root
+        self.env = os.environ.copy()
+        self.env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-def cleanup_old_files():
-    import glob
-    patterns = ["/tmp/bale_output_*.txt", "/tmp/command-output-*.txt"]
-    now = time.time()
-    for pattern in patterns:
-        for f in glob.glob(pattern):
-            try:
-                if now - os.path.getmtime(f) > 3600:
-                    os.unlink(f)
-            except Exception:
-                pass
+    def execute(self, command: str) -> Tuple[int, str, str, float]:
+        """
+        Execute a command.
+        For `cd` commands, we change the internal directory without running a subprocess.
+        For other commands, we prefix with `cd '{current_dir}' &&` to preserve state.
+        """
+        start_time = time.time()
+        cmd_stripped = command.strip()
 
-def log(msg: str):
-    print(msg, flush=True)
+        # Handle cd command internally
+        if cmd_stripped.startswith('cd '):
+            return self._handle_cd(cmd_stripped, start_time)
 
-def main():
-    log("🤖 Bale SSH Bot starting (stateful executor)...")
-    setup_environment()
-    cleanup_old_files()
+        # For any other command, run in a subprocess with current directory prefix
+        final_command = command
+        if self.current_dir:
+            # Escape single quotes in directory name
+            safe_dir = self.current_dir.replace("'", "'\\''")
+            final_command = f"cd '{safe_dir}' && {command}"
 
-    try:
-        config = BotConfig.from_env()
-        log(f"✅ Config loaded – Chat ID: {config.chat_id[:10]}...")
-    except ValueError as e:
-        log(f"❌ Config error: {e}")
-        sys.exit(1)
-
-    handler = BaleBotHandler(config)
-    log("✅ Bot handler initialized with stateful executor")
-    
-    # Start from latest updates, ignore old history
-    offset = 0
-    current_time = time.time()
-    log(f"📝 Starting with offset {offset}, ignoring messages older than 30 seconds")
-    
-    processed = 0
-    stop_requested = False
-
-    while not stop_requested:
         try:
-            updates = handler.get_updates(offset)
-            if not updates:
-                time.sleep(1)
-                continue
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.out', delete=False) as out_f, \
+                 tempfile.NamedTemporaryFile(mode='w+', suffix='.err', delete=False) as err_f:
 
-            for update in updates:
-                update_id = update.get("update_id", 0)
-                offset = max(offset, update_id + 1)
+                proc = subprocess.Popen(
+                    final_command,
+                    shell=True,
+                    executable='/bin/bash',
+                    stdout=out_f,
+                    stderr=err_f,
+                    env=self.env,
+                    cwd="/",  # we use explicit cd, so cwd doesn't matter
+                    text=True
+                )
 
-                message = update.get("message") or update.get("edited_message")
-                if not message:
-                    continue
+                try:
+                    exit_code = proc.wait(timeout=self.timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    stderr = f"Command timed out after {self.timeout} seconds"
+                    exit_code = -1
 
-                # Ignore messages older than 30 seconds
-                msg_date = message.get("date", 0)
-                if current_time - msg_date > 30:
-                    log(f"⏭️ Skipping old message from {datetime.fromtimestamp(msg_date)}")
-                    continue
+                with open(out_f.name, 'r') as f:
+                    stdout = f.read(self.max_output_size)
+                    if len(stdout) == self.max_output_size:
+                        stdout += "\n... [Output truncated]"
+                with open(err_f.name, 'r') as f:
+                    stderr = f.read(self.max_output_size)
+                    if len(stderr) == self.max_output_size:
+                        stderr += "\n... [Output truncated]"
 
-                chat = message.get("chat", {})
-                if str(chat.get("id")) != config.chat_id:
-                    log(f"⚠️ Ignoring chat {chat.get('id')}")
-                    continue
+                os.unlink(out_f.name)
+                os.unlink(err_f.name)
 
-                # Handle document uploads
-                if message.get("document"):
-                    log("📄 Received a document, uploading...")
-                    response = handler.handle_document(message)
-                    handler.send_message(response, message.get("message_id"))
-                    continue
-
-                text = message.get("text") or message.get("caption", "").strip()
-                if not text:
-                    continue
-
-                log(f"💬 Processing: {text[:50]}...")
-                # Check for stop command
-                if text.strip().lower() == "/stop":
-                    handler.send_message("🛑 Stopping bot now...")
-                    stop_requested = True
-                    break
-
-                response, file_path = handler.process_command(text)
-                handler.send_message(response, message.get("message_id"))
-                if file_path and os.path.exists(file_path):
-                    handler.send_file(file_path, f"Output for: {text[:100]}")
-                    os.unlink(file_path)
-                processed += 1
-                log(f"✅ Response sent (total processed: {processed})")
-
-            handler.save_offset(offset)
         except Exception as e:
-            log(f"❌ Unexpected error in main loop: {e}")
-            traceback.print_exc(file=sys.stdout)
-            time.sleep(5)
+            stderr = f"Execution error: {str(e)}"
+            exit_code = -1
 
-    handler.close()
-    log(f"\n📊 Summary: processed {processed} commands. Bot stopped.")
-    sys.exit(0)
+        execution_time = time.time() - start_time
+        self._save_output(command, exit_code, stdout, stderr, execution_time)
+        return exit_code, stdout, stderr, execution_time
 
-if __name__ == "__main__":
-    main()
+    def _handle_cd(self, command: str, start_time: float) -> Tuple[int, str, str, float]:
+        """Handle cd command without subprocess."""
+        # Extract target directory (remove 'cd ' and strip quotes)
+        target = command[3:].strip()
+        target = target.strip("'\"")
+        if not target:
+            return 1, "", "cd: missing directory", 0.0
+
+        # Resolve relative to current_dir
+        if target.startswith('/'):
+            new_dir = target
+        else:
+            new_dir = os.path.join(self.current_dir, target)
+        new_dir = os.path.abspath(new_dir)
+
+        if os.path.isdir(new_dir):
+            self.current_dir = new_dir
+            execution_time = time.time() - start_time
+            return 0, f"Changed directory to {self.current_dir}", "", execution_time
+        else:
+            execution_time = time.time() - start_time
+            return 1, "", f"cd: {target}: No such file or directory", execution_time
+
+    def set_directory(self, path: str) -> bool:
+        """Change the current working directory (manual state update)."""
+        if os.path.isdir(path):
+            self.current_dir = os.path.abspath(path)
+            return True
+        # Try relative to current_dir
+        test_path = os.path.join(self.current_dir, path)
+        if os.path.isdir(test_path):
+            self.current_dir = test_path
+            return True
+        return False
+
+    def get_directory(self) -> str:
+        return self.current_dir
+
+    def _save_output(self, command: str, exit_code: int, stdout: str, stderr: str, exec_time: float):
+        output_file = f"/tmp/command-output-{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        try:
+            with open(output_file, 'w') as f:
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write(f"Command: {command}\n")
+                f.write(f"Exit Code: {exit_code}\n")
+                f.write(f"Execution Time: {exec_time:.2f}s\n")
+                f.write("-" * 50 + "\n")
+                f.write("STDOUT:\n")
+                f.write(stdout if stdout else "(empty)\n")
+                f.write("-" * 50 + "\n")
+                f.write("STDERR:\n")
+                f.write(stderr if stderr else "(empty)\n")
+        except Exception:
+            pass
