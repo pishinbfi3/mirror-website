@@ -73,7 +73,7 @@ def main():
     print(f"📝 Last offset: {offset}")
     
     # Maximum number of iterations (prevent infinite loops in Actions)
-    max_iterations = 10
+    max_iterations = 999999
     iteration = 0
     processed_messages = 0
     
