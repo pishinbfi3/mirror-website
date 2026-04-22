@@ -8,29 +8,29 @@ on:
 jobs:
   mirror-website:
     runs-on: ubuntu-latest
-    env:
-      ENABLE_FTP: ${{ secrets.ENABLE_FTP }}
-      ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install wget and zip
-        run: sudo apt-get update && sudo apt-get install -y wget zip
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget zip python3 python3-pip
+          pip3 install requests
 
       - name: Download Website
         id: download
         run: |
-          wget -r -p -e robots=off "${{ secrets.WEBSITE_URL }}" \
+          wget -r -p -e robots=off "${{ vars.WEBSITE_URL }}" \
             --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
             --no-check-certificate -P ./website || true
           
           if [ -d "./website" ] && [ "$(ls -A ./website)" ]; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "✅ دانلود موفق" > status.txt
+            echo "message=✅ Website downloaded successfully" >> $GITHUB_OUTPUT
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "❌ دانلود ناموفق" > status.txt
+            echo "message=❌ Failed to download website" >> $GITHUB_OUTPUT
           fi
 
       - name: Zip Downloaded Files
@@ -40,44 +40,86 @@ jobs:
           zip -r website.zip ./website
           echo "status=success" >> $GITHUB_OUTPUT
           SIZE=$(du -h website.zip | cut -f1)
+          SIZE_BYTES=$(stat -c%s website.zip)
           echo "size=$SIZE" >> $GITHUB_OUTPUT
+          echo "size_bytes=$SIZE_BYTES" >> $GITHUB_OUTPUT
 
-      - name: Upload to FTP
-        if: env.ENABLE_FTP == 'true' && steps.download.outputs.status == 'success'
+      - name: Upload to FTP (if enabled)
+        if: vars.ENABLE_FTP == 'true' && steps.download.outputs.status == 'success'
         uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
+          server: ${{ vars.FTP_SERVER }}
+          username: ${{ vars.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          server-dir: ${{ vars.FTP_SERVER_DIR }}
           local-dir: ./
           stateful: false
           protocol: ftp
           port: "21"
 
-      - name: Send Bale Notification
-        if: env.ENABLE_TELEGRAM == 'true'
+      - name: Prepare message for Bale
+        id: prepare_msg
         run: |
           if [ "${{ steps.download.outputs.status }}" == "success" ]; then
-            MESSAGE="✅ *عملیات Mirror موفق*%0A%0A"
-            MESSAGE="$MESSAGE📦 منبع: ${{ secrets.WEBSITE_URL }}%0A"
+            MESSAGE="✅ *Mirror Operation Successful*%0A%0A"
+            MESSAGE="$MESSAGE📦 Source: ${{ vars.WEBSITE_URL }}%0A"
             
-            if [ "${{ env.ENABLE_FTP }}" == "true" ]; then
-              MESSAGE="$MESSAGE📤 آپلود FTP: فعال%0A"
-              MESSAGE="$MESSAGE🖥 سرور: ${{ secrets.FTP_SERVER }}%0A"
+            if [ "${{ vars.ENABLE_FTP }}" == "true" ]; then
+              MESSAGE="$MESSAGE📤 FTP Upload: Enabled%0A"
+              MESSAGE="$MESSAGE🖥 FTP Server: ${{ vars.FTP_SERVER }}%0A"
             else
-              MESSAGE="$MESSAGE⏸ آپلود FTP: غیرفعال%0A"
+              MESSAGE="$MESSAGE⏸ FTP Upload: Disabled%0A"
             fi
             
             if [ "${{ steps.zip.outputs.size }}" != "" ]; then
-              MESSAGE="$MESSAGE📦 حجم: ${{ steps.zip.outputs.size }}%0A"
+              MESSAGE="$MESSAGE📦 Archive Size: ${{ steps.zip.outputs.size }}%0A"
             fi
+            
+            MESSAGE="$MESSAGE✅ Status: SUCCESS%0A"
           else
-            MESSAGE="❌ *خطا در Mirror*%0A%0A"
-            MESSAGE="$MESSAGE${{ steps.download.outputs.status }}%0A"
+            MESSAGE="❌ *Mirror Operation Failed*%0A%0A"
+            MESSAGE="$MESSAGE${{ steps.download.outputs.message }}%0A"
+            MESSAGE="$MESSAGE❌ Status: FAILED%0A"
           fi
           
-          MESSAGE="$MESSAGE⏰ زمان: $(date '+%Y-%m-%d %H:%M:%S')"
+          MESSAGE="$MESSAGE⏰ Time: $(date '+%Y-%m-%d %H:%M:%S')%0A"
+          MESSAGE="$MESSAGE🆔 Run ID: ${{ github.run_id }}"
+          
+          # Save to file for Python script
+          echo "$MESSAGE" | sed 's/%0A/\n/g' > message.txt
+          echo "MESSAGE_FILE=message.txt" >> $GITHUB_OUTPUT
+
+      - name: Send to Bale (always)
+        if: vars.ENABLE_TELEGRAM == 'true'
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          BALE_CHAT_ID: ${{ secrets.BALE_CHAT_ID }}
+          FILE_TO_SEND: ${{ github.workspace }}/website.zip
+          STATUS: ${{ steps.download.outputs.status }}
+          MESSAGE: ${{ steps.download.outputs.message }}
+        run: |
+          # Check if zip file exists
+          if [ -f "website.zip" ] && [ "${{ steps.download.outputs.status }}" == "success" ]; then
+            # Send status message first
+            python3 scripts/send_to_bale.py
+          else
+            # Just send text message without file
+            MESSAGE="📡 *Mirror Report*%0A%0A"
+            MESSAGE="$MESSAGE${{ steps.download.outputs.message }}%0A"
+            MESSAGE="$MESSAGE⏰ Time: $(date '+%Y-%m-%d %H:%M:%S')"
+            
+            curl -X POST "https://tapi.bale.ai/bot${{ secrets.BALE_BOT_TOKEN }}/sendMessage" \
+              -H "Content-Type: application/json" \
+              -d "{\"chat_id\":\"${{ secrets.BALE_CHAT_ID }}\", \"text\":\"$MESSAGE\", \"parse_mode\":\"Markdown\"}"
+          fi
+
+      - name: Send always notification (if no file)
+        if: vars.ENABLE_TELEGRAM == 'true' && (steps.download.outputs.status != 'success' || !success())
+        run: |
+          MESSAGE="⚠️ *Mirror Operation Status*%0A%0A"
+          MESSAGE="$MESSAGE${{ steps.download.outputs.message }}%0A"
+          MESSAGE="$MESSAGE⏰ Time: $(date '+%Y-%m-%d %H:%M:%S')%0A"
+          MESSAGE="$MESSAGE🆔 Run ID: ${{ github.run_id }}"
           
           curl -X POST "https://tapi.bale.ai/bot${{ secrets.BALE_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
