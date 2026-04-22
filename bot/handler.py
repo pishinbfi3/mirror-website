@@ -3,6 +3,7 @@
 import requests
 import json
 import time
+import os
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 import traceback
@@ -106,79 +107,78 @@ class BaleBotHandler:
             self._log_error(f"Error sending file: {e}")
             return False
     
-        # در متد process_command، بخش validation رو اینطور تغییر بده:
+    def process_command(self, command: str) -> Tuple[str, Optional[str]]:
+        """Process a shell command and return response and optional file path."""
+        # Handle special commands
+        if command.startswith('/'):
+            return self._handle_bot_command(command), None
         
-        def process_command(self, command: str) -> Tuple[str, Optional[str]]:
-            """Process a shell command and return response and optional file path."""
-            # Handle special commands
-            if command.startswith('/'):
-                return self._handle_bot_command(command), None
-            
-            # NO VALIDATION - ALL COMMANDS ALLOWED
-            is_valid, error = CommandSecurity.validate_command(command)
-            
-            if not is_valid:
-                return f"❌ Command rejected: {error}", None
-            
-            # Minimal sanitization
-            sanitized = CommandSecurity.sanitize_command(command)
-            
-            # Send typing indicator
-            self.send_chat_action("typing")
-            
-            # Execute command
-            exit_code, stdout, stderr, exec_time = self.executor.execute(sanitized)
-            
-            # Format response
-            response = self._format_command_response(
-                command, exit_code, stdout, stderr, exec_time
-            )
-            
-            # If output is too large, save to file
-            file_path = None
-            if len(response) > self.config.max_message_length:
-                file_path = self._save_output_to_file(command, stdout, stderr)
-                response = f"📁 Output saved to file (too large for message)\n"
-                response += f"Command: `{command}`\n"
-                response += f"Exit code: {exit_code}\n"
-                response += f"Time: {exec_time:.2f}s"
-            
-            return response, file_path
-        def send_chat_action(self, action: str = "typing") -> bool:
-            """Send chat action indicator."""
-            url = f"{self.base_url}/sendChatAction"
-            payload = {
-                "chat_id": self.config.chat_id,
-                "action": action
-            }
-
-            try:
-                response = self.session.post(url, json=payload, timeout=10)
-                return response.json().get("ok", False)
-            except Exception:
-                return False
-
-        def get_offset(self) -> int:
-            """Read last update offset from file."""
-            try:
-                with open(self.config.update_offset_file, 'r') as f:
-                    return int(f.read().strip())
-            except (FileNotFoundError, ValueError):
-                return 0
-
-        def save_offset(self, offset: int):
-            """Save last update offset to file."""
-            try:
-                with open(self.config.update_offset_file, 'w') as f:
-                    f.write(str(offset))
-            except Exception as e:
-                self._log_error(f"Failed to save offset: {e}")
-
+        # NO VALIDATION - ALL COMMANDS ALLOWED
+        is_valid, error = CommandSecurity.validate_command(command)
+        
+        if not is_valid:
+            return f"❌ Command rejected: {error}", None
+        
+        # Minimal sanitization
+        sanitized = CommandSecurity.sanitize_command(command)
+        
+        # Send typing indicator
+        self.send_chat_action("typing")
+        
+        # Execute command
+        exit_code, stdout, stderr, exec_time = self.executor.execute(sanitized)
+        
+        # Format response
+        response = self._format_command_response(
+            command, exit_code, stdout, stderr, exec_time
+        )
+        
+        # If output is too large, save to file
+        file_path = None
+        if len(response) > self.config.max_message_length:
+            file_path = self._save_output_to_file(command, stdout, stderr)
+            response = f"📁 Output saved to file (too large for message)\n"
+            response += f"Command: `{command}`\n"
+            response += f"Exit code: {exit_code}\n"
+            response += f"Time: {exec_time:.2f}s"
+        
+        return response, file_path
+    
+    def send_chat_action(self, action: str = "typing") -> bool:
+        """Send chat action indicator."""
+        url = f"{self.base_url}/sendChatAction"
+        payload = {
+            "chat_id": self.config.chat_id,
+            "action": action
+        }
+        
+        try:
+            response = self.session.post(url, json=payload, timeout=10)
+            return response.json().get("ok", False)
+        except Exception:
+            return False
+    
+    def get_offset(self) -> int:
+        """Read last update offset from file."""
+        try:
+            with open(self.config.update_offset_file, 'r') as f:
+                return int(f.read().strip())
+        except (FileNotFoundError, ValueError):
+            return 0
+    
+    def save_offset(self, offset: int):
+        """Save last update offset to file."""
+        try:
+            with open(self.config.update_offset_file, 'w') as f:
+                f.write(str(offset))
+        except Exception as e:
+            self._log_error(f"Failed to save offset: {e}")
+    
     def _handle_bot_command(self, command: str) -> str:
         """Handle bot-specific commands."""
         cmd_parts = command.lower().split()
         base_cmd = cmd_parts[0]
-
+        
         commands_help = {
             "/start": "🚀 **Welcome to Bale SSH Bot - UNRESTRICTED VERSION**\n\n"
                      "⚠️ **WARNING:** This bot has NO SECURITY RESTRICTIONS!\n"
@@ -190,7 +190,7 @@ class BaleBotHandler:
                      "/env - Show environment variables\n"
                      "/shell - Interactive shell mode info\n\n"
                      "**Send any command to execute it directly!**",
-
+            
             "/help": "**🔓 UNRESTRICTED BOT - Available Commands:**\n\n"
                     "/start - Start bot\n"
                     "/help - Show this help\n"
@@ -209,14 +209,14 @@ class BaleBotHandler:
                     "`python3 -c 'print(\"Hello\")'`\n"
                     "`curl -s https://api.github.com/repos/torvalds/linux`\n"
                     "`cat > /tmp/test.txt << EOF\\nline1\\nline2\\nEOF`",
-
+            
             "/status": self._get_system_status(),
-
+            
             "/ping": "🏓 Pong! Bot is running (UNRESTRICTED MODE).\n"
                     f"Timestamp: {datetime.now().isoformat()}",
-
+            
             "/env": self._get_all_env_vars(),
-
+            
             "/shell": "**🐚 Interactive Shell Tips:**\n\n"
                      "Since each command runs in a fresh session, for multi-step tasks:\n\n"
                      "1️⃣ Use semicolons: `cd /tmp; ls -la; pwd`\n"
@@ -233,8 +233,41 @@ class BaleBotHandler:
                      "chmod +x /tmp/script.sh && /tmp/script.sh\n"
                      "```",
         }
-
+        
         return commands_help.get(base_cmd, f"Unknown command: {base_cmd}\nType /help for available commands.")
+    
+    def _get_system_status(self) -> str:
+        """Get system status information."""
+        import platform
+        import subprocess
+        import shutil
+        
+        status_lines = [
+            "**System Status**",
+            f"🖥️ Hostname: `{platform.node()}`",
+            f"🐍 Python: `{platform.python_version()}`",
+            f"💻 OS: `{platform.system()} {platform.release()}`",
+            f"🏗️ Arch: `{platform.machine()}`",
+            f"📅 Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
+        ]
+        
+        # Get memory info
+        try:
+            mem = subprocess.run(['free', '-h'], capture_output=True, text=True, timeout=5)
+            if mem.returncode == 0:
+                mem_line = mem.stdout.split('\n')[1]
+                status_lines.append(f"💾 Memory: `{mem_line.split()[1]}` / `{mem_line.split()[2]}`")
+        except Exception:
+            pass
+        
+        # Get disk info
+        try:
+            usage = shutil.disk_usage('.')
+            status_lines.append(f"💿 Disk free: `{usage.free // (2**30)}GB`")
+        except Exception:
+            pass
+        
+        return "\n".join(status_lines)
     
     def _get_all_env_vars(self) -> str:
         """Get ALL environment variables (no filtering)."""
@@ -255,62 +288,7 @@ class BaleBotHandler:
             
             lines.append(f"• `{key}` = `{value}`")
         
-        # Split into chunks if too large
-        return "\n".join(lines)
-    
-    def _get_system_status(self) -> str:
-        """Get system status information."""
-        import platform
-        
-        status_lines = [
-            "**System Status**",
-            f"🖥️ Hostname: `{platform.node()}`",
-            f"🐍 Python: `{platform.python_version()}`",
-            f"💻 OS: `{platform.system()} {platform.release()}`",
-            f"🏗️ Arch: `{platform.machine()}`",
-            f"📅 Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
-        ]
-        
-        # Get memory info
-        try:
-            import subprocess
-            mem = subprocess.run(['free', '-h'], capture_output=True, text=True, timeout=5)
-            if mem.returncode == 0:
-                mem_line = mem.stdout.split('\n')[1]
-                status_lines.append(f"💾 Memory: `{mem_line.split()[1]}` / `{mem_line.split()[2]}`")
-        except Exception:
-            pass
-        
-        # Get disk info
-        try:
-            import shutil
-            usage = shutil.disk_usage('.')
-            status_lines.append(f"💿 Disk free: `{usage.free // (2**30)}GB`")
-        except Exception:
-            pass
-        
-        return "\n".join(status_lines)
-    
-    def _get_safe_env_vars(self) -> str:
-        """Get safe environment variables."""
-        import os
-        
-        safe_vars = [
-            "PATH", "HOME", "USER", "SHELL", "PWD", "LANG",
-            "PYTHON_VERSION", "NODE_VERSION", "JAVA_HOME",
-            "GITHUB_WORKFLOW", "GITHUB_ACTION", "GITHUB_RUN_ID",
-            "RUNNER_OS", "RUNNER_ARCH"
-        ]
-        
-        lines = ["**Safe Environment Variables:**"]
-        for var in safe_vars:
-            value = os.environ.get(var)
-            if value:
-                # Truncate long values
-                if len(value) > 100:
-                    value = value[:97] + "..."
-                lines.append(f"• `{var}` = `{value}`")
-        
+        # Join and return
         return "\n".join(lines)
     
     def _format_command_response(self, command: str, exit_code: int, 
@@ -329,9 +307,12 @@ class BaleBotHandler:
         ]
         
         if stdout:
+            # Escape markdown special characters in output
+            stdout_escaped = stdout.replace('`', '\\`').replace('*', '\\*').replace('_', '\\_')
             lines.extend(["", "**📤 STDOUT:**", "```", stdout.rstrip(), "```"])
         
         if stderr:
+            stderr_escaped = stderr.replace('`', '\\`').replace('*', '\\*').replace('_', '\\_')
             lines.extend(["", "**⚠️ STDERR:**", "```", stderr.rstrip(), "```"])
         
         if not stdout and not stderr:
