@@ -1,18 +1,17 @@
 #!/usr/bin/env python
 from functions import *
+import sys
 
 def main():
-
     check_for_database()
 
     if len(sys.argv) > 1:
-
         if sys.argv[1] == "start":
             dl_start()
             
         elif sys.argv[1] == "custom":
             if len(sys.argv) > 2:
-                # چاپ مسیر ذخیره‌سازی برای ربات
+                # Print download path for bot to track
                 print(f"OUTPUT_DIR={get_dl_location('DownloadLocation')}/handpicked")
                 custom_dl(sys.argv[2])
             else:
@@ -51,7 +50,6 @@ def main():
 
     else:
         how_to_use("Missing command.")
-
 
 if __name__ == '__main__':
     main()
