@@ -1,4 +1,4 @@
-name: Bale Bot Runner
+name: Bale Bot CI
 
 on:
   workflow_dispatch:
@@ -14,27 +14,20 @@ jobs:
       ENABLE_TELEGRAM: "true"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Clone downloader
-        run: |
-          git clone https://github.com/mariosemes/PornHub-downloader-python.git PornHub-downloader-python-master
-
-      - name: Fix old lxml
-        run: |
-          sed -i 's/lxml==4.6.3/lxml==4.9.3/g' PornHub-downloader-python-master/requirements.txt
-
-      - name: Setup python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -r PornHub-downloader-python-master/requirements.txt
+          pip install -r downloader/requirements.txt
 
-      - name: Run bot
+      - name: Run bot 5 hours (auto‑restart by schedule)
         run: |
           timeout 5h python bot.py
