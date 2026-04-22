@@ -7,14 +7,6 @@ on:
         description: 'Run specific command (optional)'
         required: false
         type: string
-  schedule:
-    - cron: '*/2 * * * *'  # Check for new messages every 2 minutes
-  push:
-    branches:
-      - main
-    paths:
-      - 'bot/**'
-      - '.github/workflows/bale-ssh-bot.yml'
 
 permissions:
   contents: read
