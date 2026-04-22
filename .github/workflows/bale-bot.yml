@@ -13,7 +13,7 @@ jobs:
       ENABLE_FTP: ${{ secrets.ENABLE_FTP || 'false' }}
 
     steps:
-      - name: Checkout repository (bot code + downloader)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -36,7 +36,8 @@ jobs:
 
       - name: Create necessary directories
         run: |
-          mkdir -p downloader/logs downloader/handpicked downloader/temp_split
+          mkdir -p logs temp_split downloads
+          mkdir -p downloads/handpicked
 
       - name: Run bot
         run: |
