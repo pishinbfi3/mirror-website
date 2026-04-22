@@ -1,44 +1,59 @@
-name: Telegram Bot CI
+name: Bale SSH Bot
 
 on:
   workflow_dispatch:
+    inputs:
+      command:
+        description: 'Run specific command (optional)'
+        required: false
+        type: string
+  schedule:
+    - cron: '*/2 * * * *'  # Check for new messages every 2 minutes
+  push:
+    branches:
+      - main
+    paths:
+      - 'bot/**'
+      - '.github/workflows/bale-ssh-bot.yml'
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-run:
+  bot-runner:
     runs-on: ubuntu-latest
-    env:
-      BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
-      BALE_CHAT_ID: ${{ secrets.BALE_CHAT_ID }}
-      ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM || 'true' }}
-      ENABLE_FTP: ${{ secrets.ENABLE_FTP || 'false' }}
-
+    timeout-minutes: 10
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install system dependencies for lxml
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev zlib1g-dev
-
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create necessary directories
-        run: |
-          mkdir -p logs temp_split downloads
-          mkdir -p downloads/handpicked
+      - name: Run Bale SSH Bot
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          BALE_CHAT_ID: ${{ secrets.BALE_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: python -m bot.main
 
-      - name: Run bot
-        run: |
-          python bot.py
+      - name: Upload execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs-${{ github.run_id }}
+          path: |
+            /tmp/bale-bot-*.log
+            /tmp/command-output-*.txt
+          retention-days: 7
