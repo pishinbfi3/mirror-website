@@ -14,7 +14,7 @@ permissions:
 jobs:
   bot-runner:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 360
     
     steps:
       - name: Checkout repository
