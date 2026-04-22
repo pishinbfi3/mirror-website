@@ -1,8 +1,8 @@
-"""Configuration module for Bale SSH Bot."""
+"""Configuration module for Bale SSH Bot - NO RESTRICTIONS."""
 
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 
 @dataclass
@@ -16,15 +16,7 @@ class BotConfig:
     log_file: str = "/tmp/bale-bot-execution.log"
     max_message_length: int = 4000
     timeout_seconds: int = 300
-    allowed_commands: tuple = (
-        "ls", "pwd", "whoami", "date", "uname", "df", "free",
-        "ps", "netstat", "ifconfig", "ip", "ping", "curl",
-        "wget", "git", "python", "python3", "pip", "npm",
-        "node", "go", "rustc", "cargo", "gcc", "g++", "make",
-        "docker", "kubectl", "helm", "terraform", "ansible",
-        "cat", "head", "tail", "grep", "awk", "sed", "find",
-        "echo", "env", "printenv", "hostname", "uptime"
-    )
+    allowed_commands: tuple = field(default_factory=tuple)  # Empty = ALL ALLOWED
     
     @classmethod
     def from_env(cls) -> "BotConfig":
