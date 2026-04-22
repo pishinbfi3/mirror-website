@@ -7,16 +7,15 @@ jobs:
   build-and-run:
     runs-on: ubuntu-latest
     env:
-      # These values should be provided as repository secrets.
       BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
       BALE_CHAT_ID: ${{ secrets.BALE_CHAT_ID }}
       ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}
       ENABLE_FTP: ${{ secrets.ENABLE_FTP }}
+
     steps:
       - name: Checkout repository (bot code)
         uses: actions/checkout@v4
         with:
-          # Ensure we have the full repository including the bot files.
           fetch-depth: 0
 
       - name: Clone PornHub-downloader-python
@@ -26,7 +25,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          # پین به نسخه پایدار با چرخ‌های بیشتر
+          python-version: '3.11'
+
+      - name: Install system deps for lxml
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev zlib1g-dev
 
       - name: Install dependencies
         run: |
@@ -37,15 +43,10 @@ jobs:
           pip install -r PornHub-downloader-python-master/requirements.txt
 
       - name: Run bot (short test)
-        # The bot runs indefinitely, so we only execute a short command to
-        # verify that the script starts without errors. We invoke the downloader
-        # directly with a harmless command.
         run: |
           python bot.py &
           BOT_PID=$!
-          # Give the bot a moment to start.
           sleep 5
-          # Test each supported action quickly.
           python PornHub-downloader-python-master/phdler.py start || true
           python PornHub-downloader-python-master/phdler.py list all || true
           kill $BOT_PID || true
@@ -53,4 +54,3 @@ jobs:
       - name: Clean up
         if: always()
         run: echo "Workflow completed"
-
