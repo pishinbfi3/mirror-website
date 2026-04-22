@@ -1,4 +1,4 @@
-"""Main bot handler with manual state tracking (no persistent shell hangs)."""
+"""Main bot handler with process manager and folder download support."""
 
 import requests
 import json
@@ -13,7 +13,6 @@ from datetime import datetime
 
 from .config import BotConfig
 from .executor import CommandExecutor
-from .security import CommandSecurity
 from .process_manager import ProcessManager
 
 
@@ -21,16 +20,15 @@ class BaleBotHandler:
     def __init__(self, config: BotConfig):
         self.config = config
         self.executor = CommandExecutor(timeout=config.timeout_seconds)
+        self.process_manager = ProcessManager()
         self.base_url = f"{config.api_base_url}/bot{config.bot_token}"
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Bale-SSH-Bot/1.0",
             "Accept": "application/json"
         })
-        self.process_manager = ProcessManager()
-        self.executor.process_manager = self.process_manager  # اتصال
 
-    # ---------- API methods ----------
+    # ---------- API methods (بدون تغییر) ----------
     def get_updates(self, offset: Optional[int] = None) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/getUpdates"
         params = {"timeout": 30, "limit": 10}
@@ -130,18 +128,18 @@ class BaleBotHandler:
             return None
 
     def split_and_send_file(self, file_path: str, original_name: str) -> bool:
-        """Split a large file into 9MB chunks and send them."""
+        """Split a large file into 9MB chunks and send them (no extra zip)."""
         MAX_SIZE = 10 * 1024 * 1024   # 10 MB
         CHUNK_SIZE = 9 * 1024 * 1024  # 9 MB chunks
         
         file_size = os.path.getsize(file_path)
         
-        # اگر فایل کوچک است، مستقیم بفرست
         if file_size <= MAX_SIZE:
             return self.send_file(file_path, f"📁 {original_name} ({file_size//1024} KB)")
         
-        # فایل بزرگ: تقسیم به قطعات (بدون zip اضافی)
+        # Split into parts
         part_num = 1
+        total_parts = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
         with open(file_path, 'rb') as f_in:
             while True:
                 chunk = f_in.read(CHUNK_SIZE)
@@ -151,13 +149,12 @@ class BaleBotHandler:
                 with open(part_path, 'wb') as f_out:
                     f_out.write(chunk)
                 
-                caption = (f"📦 {original_name} (part {part_num}/{file_size//CHUNK_SIZE + 1})\n"
+                caption = (f"📦 {original_name} (part {part_num}/{total_parts})\n"
                            f"🔧 Combine: `cat {original_name}.part* > {original_name}`")
                 if not self.send_file(part_path, caption):
                     return False
                 os.unlink(part_path)
                 part_num += 1
-        
         return True
 
     def handle_document(self, message: Dict[str, Any]) -> str:
@@ -174,14 +171,16 @@ class BaleBotHandler:
         shutil.move(local_path, dest_path)
         return f"✅ File saved to `{dest_path}` ({os.path.getsize(dest_path)} bytes)"
 
-    # ---------- Command processing ----------
+    # ---------- Command processing (اصلاح شده) ----------
     def process_command(self, command: str) -> Tuple[str, Optional[str]]:
+        """Process command: background (& or !) or normal, or bot commands."""
         command = command.strip()
-        # اگر دستور با / شروع شود، همان رفتار قبل
+        
+        # دستورات داخلی بات (با / شروع)
         if command.startswith('/'):
             return self._handle_bot_command(command), None
         
-        # بررسی برای اجرای پس‌زمینه (مثلاً `ls -la &` یا `!ls -la`)
+        # بررسی برای اجرای پس‌زمینه
         background = False
         if command.endswith(' &'):
             background = True
@@ -192,7 +191,24 @@ class BaleBotHandler:
         
         if background:
             job_id = self.process_manager.submit(command)
-            return f"🔄 Running in background: job `{job_id}`\nUse `/jobs` to track, `/kill {job_id}` to stop.", None
+            return (f"🔄 Running in background: job `{job_id}`\n"
+                    f"Use `/jobs` to track, `/kill {job_id}` to stop."), None
+        
+        # اجرای عادی (همگام)
+        try:
+            self.send_chat_action("typing")
+            exit_code, stdout, stderr, exec_time = self.executor.execute(command)
+            response = self._format_command_response(command, exit_code, stdout, stderr, exec_time)
+            file_path = None
+            if len(response) > self.config.max_message_length:
+                file_path = self._save_output_to_file(command, stdout, stderr)
+                response = (f"📁 Output saved to file (too large for message)\n"
+                            f"Command: `{command}`\nExit: {exit_code}\nTime: {exec_time:.2f}s")
+            return response, file_path
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            print(f"❌ Exception in process_command: {error_trace}", flush=True)
+            return f"❌ Internal error: {str(e)}", None
 
     def _handle_bot_command(self, command: str) -> str:
         cmd_parts = command.lower().split()
@@ -206,17 +222,12 @@ class BaleBotHandler:
             elif base_cmd == "/download":
                 if len(cmd_parts) < 2:
                     return "❌ Usage: `/download <path>` (file or directory)"
-
                 path = cmd_parts[1]
-
-                # بررسی وجود فایل یا دایرکتوری
                 if not os.path.exists(path):
                     return f"❌ Not found: {path}"
-
-                # اگر دایرکتوری است، ابتدا zip کن
+                # اگر دایرکتوری است، zip کن
                 if os.path.isdir(path):
                     zip_path = f"/tmp/{os.path.basename(path)}.zip"
-                    import shutil
                     shutil.make_archive(zip_path.replace('.zip', ''), 'zip', path)
                     success = self.split_and_send_file(zip_path, os.path.basename(zip_path))
                     os.unlink(zip_path)
@@ -224,8 +235,7 @@ class BaleBotHandler:
                         return f"✅ Sending directory `{path}` as ZIP (split if needed)"
                     else:
                         return f"❌ Failed to send directory"
-
-                # اگر فایل است
+                # فایل عادی
                 if self.split_and_send_file(path, os.path.basename(path)):
                     return f"✅ Sending `{path}` (split if >10MB)"
                 else:
@@ -293,10 +303,8 @@ class BaleBotHandler:
                 bg_command = ' '.join(cmd_parts[1:])
                 job_id = self.process_manager.submit(bg_command)
                 return f"🔄 Job `{job_id}` started in background.\nUse `/jobs` to see status, `/kill {job_id}` to stop."
-
             elif base_cmd == "/jobs":
                 return self.process_manager.list_jobs()
-
             elif base_cmd == "/kill":
                 if len(cmd_parts) < 2:
                     return "❌ Usage: `/kill <job_id>`"
@@ -305,7 +313,6 @@ class BaleBotHandler:
                     return f"✅ Killed job `{job_id}`"
                 else:
                     return f"❌ Job `{job_id}` not found or already finished."
-
             elif base_cmd == "/output":
                 if len(cmd_parts) < 2:
                     return "❌ Usage: `/output <job_id>`"
@@ -326,9 +333,10 @@ class BaleBotHandler:
         return """**🔓 UNRESTRICTED BOT – Enhanced Commands**
 
 **Shell:** Any command runs with persistent state (cd, env vars preserved).
+**Background:** Add `&` or `!` at beginning to run in background (e.g., `!wget -r ...`)
 
 **Files:**
-• `/download <path>` – download file (auto-split >10MB)
+• `/download <path>` – download file or folder (auto-split >10MB)
 • `/upload` – send a document to upload to current dir
 • `/edit <file>` – view file content
 • `/save <file> <content>` – save/replace file
@@ -337,6 +345,12 @@ class BaleBotHandler:
 • `/cd <dir>` – change directory
 • `/pwd` – show current dir
 • `/stop` – stop bot
+
+**Process Management:**
+• `/bg <command>` – run command in background
+• `/jobs` – list running/completed jobs
+• `/kill <job_id>` – terminate a running job
+• `/output <job_id>` – show last 100 lines of output
 
 **Info:**
 • `/info` – detailed system info
@@ -412,6 +426,5 @@ class BaleBotHandler:
             pass
 
     def close(self):
-        """Clean up resources (nothing to close for CommandExecutor)."""
-        # Executor doesn't hold any persistent processes, so just pass
+        """Clean up resources."""
         pass
