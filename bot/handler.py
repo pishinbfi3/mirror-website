@@ -1,4 +1,4 @@
-"""Main bot handler for processing messages, files, and persistent shell commands."""
+"""Main bot handler with manual state tracking (no persistent shell hangs)."""
 
 import requests
 import json
@@ -12,21 +12,20 @@ from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
 from .config import BotConfig
-from .executor import PersistentShell
+from .executor import CommandExecutor
 from .security import CommandSecurity
 
 
 class BaleBotHandler:
     def __init__(self, config: BotConfig):
         self.config = config
-        self.shell = PersistentShell(timeout=config.timeout_seconds)
+        self.executor = CommandExecutor(timeout=config.timeout_seconds)
         self.base_url = f"{config.api_base_url}/bot{config.bot_token}"
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Bale-SSH-Bot/1.0",
             "Accept": "application/json"
         })
-        self.pending_edit = {}
 
     # ---------- API methods (unchanged) ----------
     def get_updates(self, offset: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -106,7 +105,7 @@ class BaleBotHandler:
         except Exception as e:
             self._log_error(f"Failed to save offset: {e}")
 
-    # ---------- File handling ----------
+    # ---------- File handling (unchanged) ----------
     def download_file(self, file_id: str) -> Optional[str]:
         url = f"{self.base_url}/getFile"
         try:
@@ -164,21 +163,20 @@ class BaleBotHandler:
         local_path = self.download_file(file_id)
         if not local_path:
             return "❌ Failed to download file."
-        exit_code, stdout, stderr, _ = self.shell.execute("pwd")
-        dest_dir = stdout.strip() if exit_code == 0 else "/tmp"
+        dest_dir = self.executor.get_directory()
         dest_path = os.path.join(dest_dir, file_name)
         shutil.move(local_path, dest_path)
         return f"✅ File saved to `{dest_path}` ({os.path.getsize(dest_path)} bytes)"
 
-    # ---------- Command processing with full exception logging ----------
+    # ---------- Command processing ----------
     def process_command(self, command: str) -> Tuple[str, Optional[str]]:
-        """Process a shell command or bot command – exceptions are caught and logged."""
+        """Process a shell command or bot command."""
         try:
             if command.startswith('/'):
                 return self._handle_bot_command(command), None
 
             self.send_chat_action("typing")
-            exit_code, stdout, stderr, exec_time = self.shell.execute(command)
+            exit_code, stdout, stderr, exec_time = self.executor.execute(command)
             response = self._format_command_response(command, exit_code, stdout, stderr, exec_time)
             file_path = None
             if len(response) > self.config.max_message_length:
@@ -188,10 +186,9 @@ class BaleBotHandler:
         except Exception as e:
             error_trace = traceback.format_exc()
             print(f"❌ Exception in process_command: {error_trace}", flush=True)
-            return f"❌ Internal error: {str(e)}\nCheck Actions log for details.", None
+            return f"❌ Internal error: {str(e)}", None
 
     def _handle_bot_command(self, command: str) -> str:
-        """Handle all /commands – each case has its own try/except."""
         cmd_parts = command.lower().split()
         base_cmd = cmd_parts[0]
 
@@ -243,40 +240,41 @@ class BaleBotHandler:
             elif base_cmd == "/cd":
                 if len(cmd_parts) < 2:
                     return "❌ Usage: `/cd <directory>`"
-                self.shell.execute(f"cd {cmd_parts[1]}")
-                _, pwd, _, _ = self.shell.execute("pwd")
-                return f"📂 Current directory: `{pwd.strip()}`"
+                target_dir = cmd_parts[1]
+                if self.executor.set_directory(target_dir):
+                    return f"📂 Changed directory to `{self.executor.get_directory()}`"
+                else:
+                    return f"❌ Invalid directory: {target_dir}"
             elif base_cmd == "/pwd":
-                _, pwd, _, _ = self.shell.execute("pwd")
-                return f"📂 `{pwd.strip()}`"
+                return f"📂 `{self.executor.get_directory()}`"
             elif base_cmd == "/info":
                 return self._get_system_info()
             elif base_cmd == "/ps":
-                _, out, _, _ = self.shell.execute("ps aux --sort=-%cpu | head -20")
+                _, out, _, _ = self.executor.execute("ps aux --sort=-%cpu | head -20")
                 return f"**🔄 Top processes**\n```\n{out[:3500]}\n```"
             elif base_cmd == "/df":
-                _, out, _, _ = self.shell.execute("df -h")
+                _, out, _, _ = self.executor.execute("df -h")
                 return f"**💾 Disk usage**\n```\n{out}\n```"
             elif base_cmd == "/netstat":
-                _, out, _, _ = self.shell.execute("ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null")
+                _, out, _, _ = self.executor.execute("ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null")
                 return f"**🌐 Open ports**\n```\n{out[:3500]}\n```"
             elif base_cmd == "/uptime":
-                _, out, _, _ = self.shell.execute("uptime")
+                _, out, _, _ = self.executor.execute("uptime")
                 return f"⏱️ `{out.strip()}`"
             elif base_cmd == "/mem":
-                _, out, _, _ = self.shell.execute("free -h")
+                _, out, _, _ = self.executor.execute("free -h")
                 return f"**🧠 Memory**\n```\n{out}\n```"
             else:
                 return self._get_help_text()
         except Exception as e:
             error_trace = traceback.format_exc()
-            print(f"❌ Exception in _handle_bot_command for {base_cmd}: {error_trace}", flush=True)
+            print(f"❌ Exception in _handle_bot_command: {error_trace}", flush=True)
             return f"❌ Command failed: {str(e)}"
 
     def _get_help_text(self) -> str:
         return """**🔓 UNRESTRICTED BOT – Enhanced Commands**
 
-**Shell:** Any command runs in persistent session (cd, env vars preserved).
+**Shell:** Any command runs with persistent state (cd, env vars preserved).
 
 **Files:**
 • `/download <path>` – download file (auto-split >10MB)
@@ -301,24 +299,24 @@ class BaleBotHandler:
 """
 
     def _get_system_info(self) -> str:
-        """Return extensive system information using persistent shell."""
+        """Return extensive system information using the executor."""
         info = []
         try:
-            _, uname, _, _ = self.shell.execute("uname -a")
+            _, uname, _, _ = self.executor.execute("uname -a")
             info.append(f"🖥️ **System:** `{uname.strip()}`")
-            _, cpu, _, _ = self.shell.execute("nproc")
+            _, cpu, _, _ = self.executor.execute("nproc")
             info.append(f"🧠 **CPU cores:** `{cpu.strip()}`")
-            _, mem, _, _ = self.shell.execute("free -h | grep Mem")
+            _, mem, _, _ = self.executor.execute("free -h | grep Mem")
             if mem:
                 parts = mem.split()
                 info.append(f"💾 **RAM:** total `{parts[1]}`, used `{parts[2]}`, free `{parts[3]}`")
-            _, disk, _, _ = self.shell.execute("df -h / | tail -1")
+            _, disk, _, _ = self.executor.execute("df -h / | tail -1")
             if disk:
                 parts = disk.split()
                 info.append(f"💿 **Disk (/):** `{parts[3]}` free of `{parts[1]}`")
-            _, load, _, _ = self.shell.execute("uptime | awk -F 'load average:' '{print $2}'")
+            _, load, _, _ = self.executor.execute("uptime | awk -F 'load average:' '{print $2}'")
             info.append(f"📈 **Load avg:** `{load.strip()}`")
-            _, users, _, _ = self.shell.execute("who | wc -l")
+            _, users, _, _ = self.executor.execute("who | wc -l")
             info.append(f"👥 **Logged users:** `{users.strip()}`")
         except Exception as e:
             info.append(f"❌ Error getting system info: {e}")
@@ -362,6 +360,3 @@ class BaleBotHandler:
                 f.write(f"{datetime.now().isoformat()} - {message}\n")
         except Exception:
             pass
-
-    def close(self):
-        self.shell.close()
