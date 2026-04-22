@@ -1,0 +1,41 @@
+name: Test FTP Connection
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ftp:
+    runs-on: ubuntu-latest
+    outputs:
+      ftp_message: ${{ steps.ftp_test.outputs.ftp_message }}
+      ftp_success: ${{ steps.ftp_test.outputs.ftp_success }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install lftp
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      - name: Test FTP Connection
+        id: ftp_test
+        run: |
+          # تست اتصال FTP
+          if lftp -c "open -u ${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }} ftp://${{ secrets.FTP_SERVER }}:21; ls" > ftp_list.txt 2>&1; then
+            FILE_COUNT=$(wc -l < ftp_list.txt)
+            echo "ftp_success=true" >> $GITHUB_OUTPUT
+            echo "ftp_message=✅ اتصال FTP با موفقیت برقرار شد!\\n📁 تعداد فایل‌ها: $FILE_COUNT\\n🖥 سرور: ${{ secrets.FTP_SERVER }}" >> $GITHUB_OUTPUT
+          else
+            ERROR_MSG=$(cat ftp_list.txt 2>/dev/null || echo "خطای ناشناخته")
+            echo "ftp_success=false" >> $GITHUB_OUTPUT
+            echo "ftp_message=❌ اتصال FTP ناموفق بود!\\n🔍 خطا: $ERROR_MSG\\n🖥 سرور: ${{ secrets.FTP_SERVER }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send result to Bale
+        run: |
+          MESSAGE="📡 *گزارش تست FTP*\\n\\n"
+          MESSAGE="$MESSAGE${{ steps.ftp_test.outputs.ftp_message }}\\n\\n"
+          MESSAGE="$MESSAGE⏰ زمان: $(date '+%Y-%m-%d %H:%M:%S')"
+          
+          curl -X POST "https://tapi.bale.ai/bot${{ secrets.BALE_BOT_TOKEN }}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${{ secrets.BALE_CHAT_ID }}\", \"text\":\"$MESSAGE\", \"parse_mode\":\"Markdown\"}"
