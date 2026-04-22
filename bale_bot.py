@@ -28,20 +28,19 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 # ---------------------------------------------------------
 # 1) جلوگیری کامل از EOFError و UnboundLocalError
 # ---------------------------------------------------------
+
 def ensure_database_ready():
-    """
-    این تابع تضمین می‌کند که دیتابیس phdler موجود است
-    بدون اینکه phdler.py هیچگاه input() بگیرد.
-    """
     db_path = WORKDIR / "database.db"
 
     if db_path.exists():
         return
 
+    print(">>> Creating fresh phdler database ...")
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    # ساخت جدول CONFIG
+    # Create CONFIG table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS CONFIG (
             key TEXT PRIMARY KEY,
@@ -49,31 +48,20 @@ def ensure_database_ready():
         )
     """)
 
-    # مسیر دانلود را تنظیم کن
-    cur.execute("""
-        INSERT OR REPLACE INTO CONFIG (key, value)
-        VALUES ('DownloadLocation', ?)
-    """, (str(DOWNLOAD_DIR),))
-
-    # پوشه‌های دیگر مورد نیاز پروژه (خالی ولی لازم)
-    cur.execute("""
-        INSERT OR REPLACE INTO CONFIG (key, value)
-        VALUES ('ModelLocation', ?)
-    """, (str(DOWNLOAD_DIR / "models"),))
-
-    cur.execute("""
-        INSERT OR REPLACE INTO CONFIG (key, value)
-        VALUES ('PornstarLocation', ?)
-    """, (str(DOWNLOAD_DIR / "pornstars"),))
-
-    cur.execute("""
-        INSERT OR REPLACE INTO CONFIG (key, value)
-        VALUES ('ChannelLocation', ?)
-    """, (str(DOWNLOAD_DIR / "channels"),))
+    # Insert download paths
+    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('DownloadLocation', ?)", (str(DOWNLOAD_DIR),))
+    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('ModelLocation', ?)", (str(DOWNLOAD_DIR / 'models'),))
+    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('PornstarLocation', ?)", (str(DOWNLOAD_DIR / 'pornstars'),))
+    cur.execute("INSERT OR REPLACE INTO CONFIG (key, value) VALUES ('ChannelLocation', ?)", (str(DOWNLOAD_DIR / 'channels'),))
 
     conn.commit()
     conn.close()
 
+    # -----------------------------------------------
+    # VERY IMPORTANT: Let phdler.py create its tables
+    # -----------------------------------------------
+    code, out = run_phdler(["start"])
+    print(">>> First table-generation run result:", out)
 
 # ---------------------------------------------------------
 # 2) API functions
