@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main entry point for Bale SSH Bot with persistent shell and stop command."""
+"""Main entry point for Bale SSH Bot with stateful executor."""
 
 import sys
 import time
@@ -29,11 +29,10 @@ def cleanup_old_files():
                 pass
 
 def log(msg: str):
-    """Print with flush to ensure visibility in GitHub Actions."""
     print(msg, flush=True)
 
 def main():
-    log("🤖 Bale SSH Bot starting (enhanced version)...")
+    log("🤖 Bale SSH Bot starting (stateful executor)...")
     setup_environment()
     cleanup_old_files()
 
@@ -45,7 +44,7 @@ def main():
         sys.exit(1)
 
     handler = BaleBotHandler(config)
-    log("✅ Bot handler initialized with persistent shell")
+    log("✅ Bot handler initialized with stateful executor")
     offset = handler.get_offset()
     log(f"📝 Last offset: {offset}")
 
