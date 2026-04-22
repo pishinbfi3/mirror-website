@@ -165,7 +165,7 @@ class BaleBot:
     async def cmd_start(self, chat_id):
         """Send help message"""
         msg = (
-            "🤖 *Alibaba Downloader Bot*\n\n"
+            "🤖 *pornhub Downloader Bot*\n\n"
             "Commands:\n"
             "/run custom <url>  - Download video and send as split zip\n"
             "/run start         - Download all new items (save to disk only)\n"
