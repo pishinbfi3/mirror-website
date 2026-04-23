@@ -4,6 +4,7 @@ import time
 import os
 import uuid
 import signal
+import json
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -69,6 +70,34 @@ class ManagedProcess:
         runtime = time.time() - self.start_time
         return f"`{self.job_id}` | {self.status} | {runtime:.1f}s | {self.command[:60]}"
 
+    def to_dict(self):
+        return {
+            'job_id': self.job_id,
+            'command': self.command,
+            'timeout': self.timeout,
+            'stdout_lines': self.stdout_lines[-1000:],
+            'stderr_lines': self.stderr_lines[-1000:],
+            'exit_code': self.exit_code,
+            'start_time': self.start_time,
+            'status': self.status
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        proc = cls(data['job_id'], data['command'], data['timeout'])
+        proc.stdout_lines = data.get('stdout_lines', [])
+        proc.stderr_lines = data.get('stderr_lines', [])
+        proc.exit_code = data.get('exit_code')
+        proc.start_time = data.get('start_time', time.time())
+        proc.status = data.get('status', 'completed')
+        # فرآیندهای در حال اجرا در زمان snapshot قابل بازیابی نیستند
+        if proc.status in ('running', 'pending'):
+            proc.status = 'interrupted'
+        proc.process = None
+        proc.thread = None
+        return proc
+
+
 class ProcessManager:
     def __init__(self):
         self.jobs: Dict[str, ManagedProcess] = {}
@@ -110,7 +139,26 @@ class ProcessManager:
         now = time.time()
         with self.lock:
             to_remove = [jid for jid, p in self.jobs.items() 
-                         if p.status in ("completed", "killed", "timeout", "failed") 
+                         if p.status in ("completed", "killed", "timeout", "failed", "interrupted") 
                          and now - p.start_time > max_age_seconds]
             for jid in to_remove:
                 del self.jobs[jid]
+
+    def save_snapshot(self, filepath: str):
+        data = {}
+        with self.lock:
+            for jid, proc in self.jobs.items():
+                data[jid] = proc.to_dict()
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+    
+    def load_snapshot(self, filepath: str):
+        if not os.path.exists(filepath):
+            return
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        with self.lock:
+            self.jobs.clear()
+            for jid, proc_data in data.items():
+                proc = ManagedProcess.from_dict(proc_data)
+                self.jobs[jid] = proc
