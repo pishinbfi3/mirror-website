@@ -13,7 +13,7 @@ from datetime import datetime
 
 from .config import BotConfig
 from .executor import CommandExecutor
-from .process_manager import ProcessManager
+from .process_manager import ProcessManager, ManagedProcess
 
 
 class BaleBotHandler:
@@ -106,6 +106,56 @@ class BaleBotHandler:
         except Exception as e:
             self._log_error(f"Failed to save offset: {e}")
 
+    # ---------- Snapshot methods (جدید) ----------
+    def save_snapshot(self) -> str:
+        """ذخیره وضعیت کامل بات (current_dir، offset و jobs) در فایل JSON."""
+        snapshot = {
+            'current_dir': self.executor.get_directory(),
+            'offset': self.get_offset(),
+            'timestamp': time.time(),
+            'jobs': {}
+        }
+        # ذخیره jobs از process_manager
+        with self.process_manager.lock:
+            for jid, proc in self.process_manager.jobs.items():
+                snapshot['jobs'][jid] = proc.to_dict()
+        
+        with open(self.config.snapshot_file, 'w') as f:
+            json.dump(snapshot, f, indent=2)
+        return self.config.snapshot_file
+
+    def load_snapshot(self) -> bool:
+        """بازیابی وضعیت قبلی بات از فایل snapshot."""
+        if not os.path.exists(self.config.snapshot_file):
+            return False
+        
+        try:
+            with open(self.config.snapshot_file, 'r') as f:
+                data = json.load(f)
+            
+            # بازیابی current_dir
+            current_dir = data.get('current_dir', os.getcwd())
+            if os.path.isdir(current_dir):
+                self.executor.set_directory(current_dir)
+            
+            # بازیابی offset
+            offset = data.get('offset', 0)
+            self.save_offset(offset)
+            
+            # بازیابی jobs
+            jobs_data = data.get('jobs', {})
+            with self.process_manager.lock:
+                self.process_manager.jobs.clear()
+                for jid, proc_data in jobs_data.items():
+                    proc = ManagedProcess.from_dict(proc_data)
+                    self.process_manager.jobs[jid] = proc
+            
+            self._log_error(f"Snapshot loaded successfully from {self.config.snapshot_file}")
+            return True
+        except Exception as e:
+            self._log_error(f"Failed to load snapshot: {e}")
+            return False
+
     # ---------- File handling ----------
     def download_file(self, file_id: str) -> Optional[str]:
         url = f"{self.base_url}/getFile"
@@ -171,7 +221,7 @@ class BaleBotHandler:
         shutil.move(local_path, dest_path)
         return f"✅ File saved to `{dest_path}` ({os.path.getsize(dest_path)} bytes)"
 
-    # ---------- Command processing (اصلاح شده) ----------
+    # ---------- Command processing ----------
     def process_command(self, command: str) -> Tuple[str, Optional[str]]:
         """Process command: background (& or !) or normal, or bot commands."""
         command = command.strip()
@@ -216,7 +266,11 @@ class BaleBotHandler:
 
         try:
             if base_cmd == "/stop":
-                return "🛑 Stopping bot..."
+                snapshot_file = self.save_snapshot()
+                self.send_message("🛑 Stopping bot... Snapshot saved.")
+                if snapshot_file and os.path.exists(snapshot_file):
+                    self.send_file(snapshot_file, caption="📸 Session snapshot")
+                return "🛑 Stopping bot now..."
             elif base_cmd == "/start" or base_cmd == "/help":
                 return self._get_help_text()
             elif base_cmd == "/download":
@@ -344,7 +398,7 @@ class BaleBotHandler:
 **Session:**
 • `/cd <dir>` – change directory
 • `/pwd` – show current dir
-• `/stop` – stop bot
+• `/stop` – stop bot (saves snapshot)
 
 **Process Management:**
 • `/bg <command>` – run command in background
