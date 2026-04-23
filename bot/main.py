@@ -14,7 +14,7 @@ async def main():
     """Async main entry."""
     setup_logging("INFO")
     try:
-        config = BotConfig()  # reads from env
+        config = BotConfig.from_env()   # ← changed from BotConfig()
     except Exception as e:
         print(f"❌ Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
