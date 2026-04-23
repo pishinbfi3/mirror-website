@@ -1,156 +1,33 @@
 #!/usr/bin/env python3
-"""Main entry point for Bale SSH Bot with stateful executor and process manager."""
+"""Entry point – sets up logging, runs the bot, handles signals."""
 
+import asyncio
 import sys
-import time
-import os
-import traceback
-import glob
-from datetime import datetime
 
 from .config import BotConfig
-from .handler import BaleBotHandler
+from .bot import BaleBot
+from .logger import setup_logging
+from .exceptions import ConfigError
 
 
-def setup_environment():
-    """Ensure /tmp directory exists and log startup."""
-    os.makedirs("/tmp", exist_ok=True)
-    with open("/tmp/bale-bot-startup.log", "w") as f:
-        f.write(f"Bot started at {datetime.now().isoformat()}\n")
-        f.write(f"Python: {sys.version}\n")
-        f.write(f"PID: {os.getpid()}\n")
-
-
-def cleanup_old_files():
-    patterns = [
-        "/tmp/bale_output_*.txt",
-        "/tmp/command-output-*.txt",
-        "/tmp/bale_download_*",
-        "/tmp/*.part*",           # قطعات split
-        "/tmp/*.zip",              # فایل‌های zip موقت
-        "/tmp/bale-bot-snapshot.json"  # snapshot نباید پاک شود (اختیاری)
-    ]
-    now = time.time()
-    for pattern in patterns:
-        for filepath in glob.glob(pattern):
-            try:
-                if now - os.path.getmtime(filepath) > 3600:
-                    os.unlink(filepath)
-            except Exception:
-                pass
-
-def log(msg: str):
-    """Print message with flush."""
-    print(msg, flush=True)
-
-
-def main():
-    """Main bot loop."""
-    log("🤖 Bale SSH Bot starting (stateful executor + process manager)...")
-    setup_environment()
-    cleanup_old_files()
-
+async def main():
+    """Async main entry."""
+    setup_logging("INFO")
     try:
-        config = BotConfig.from_env()
-        log(f"✅ Config loaded – Chat ID: {config.chat_id[:10]}...")
-    except ValueError as e:
-        log(f"❌ Config error: {e}")
+        config = BotConfig()  # reads from env
+    except Exception as e:
+        print(f"❌ Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    handler = BaleBotHandler(config)
-    log("✅ Bot handler initialized with process manager")
-
-    # بازیابی وضعیت قبلی در صورت وجود snapshot
-    if handler.load_snapshot():
-        log("🔄 Previous session snapshot loaded.")
-        handler.send_message("🔄 **Session restored** – previous state (directory, background jobs) has been recovered.")
-    else:
-        log("✨ No snapshot found, starting fresh.")
-        handler.send_message("✨ **New session started** – use `/help` to see commands.")
-
-    # Start from latest updates, ignore old history
-    offset = handler.get_offset()
-    current_time = time.time()
-    log(f"📝 Starting with offset {offset}, ignoring messages older than 30 seconds")
-
-    processed = 0
-    stop_requested = False
-
-    while not stop_requested:
-        try:
-            updates = handler.get_updates(offset)
-            if not updates:
-                time.sleep(1)
-                continue
-
-            for update in updates:
-                update_id = update.get("update_id", 0)
-                offset = max(offset, update_id + 1)
-
-                message = update.get("message") or update.get("edited_message")
-                if not message:
-                    continue
-
-                # Ignore messages older than 30 seconds
-                msg_date = message.get("date", 0)
-                if current_time - msg_date > 30:
-                    log(f"⏭️ Skipping old message from {datetime.fromtimestamp(msg_date)}")
-                    continue
-
-                chat = message.get("chat", {})
-                if str(chat.get("id")) != config.chat_id:
-                    log(f"⚠️ Ignoring chat {chat.get('id')}")
-                    continue
-
-                # Handle document uploads
-                if message.get("document"):
-                    log("📄 Received a document, uploading...")
-                    response = handler.handle_document(message)
-                    handler.send_message(response, message.get("message_id"))
-                    continue
-
-                text = message.get("text") or message.get("caption", "").strip()
-                if not text:
-                    continue
-
-                log(f"💬 Processing: {text[:50]}...")
-                
-                # پردازش دستور (شامل /stop)
-                response, file_path = handler.process_command(text)
-                handler.send_message(response, message.get("message_id"))
-                if file_path and os.path.exists(file_path):
-                    handler.send_file(file_path, f"Output for: {text[:100]}")
-                    os.unlink(file_path)
-
-                # اگر دستور /stop بود، حلقه را متوقف کن
-                if text.strip().lower() == "/stop":
-                    stop_requested = True
-                    break
-
-                processed += 1
-                log(f"✅ Response sent (total processed: {processed})")
-
-                # Clean up old jobs and temporary files every 10 commands
-                if processed % 10 == 0:
-                    handler.process_manager.cleanup_old()
-                    cleanup_old_files()
-
-            handler.save_offset(offset)
-
-        except KeyboardInterrupt:
-            log("⚠️ Received interrupt, stopping...")
-            break
-        except Exception as e:
-            log(f"❌ Unexpected error in main loop: {e}")
-            traceback.print_exc(file=sys.stdout)
-            time.sleep(5)
-
-    # Final cleanup
-    handler.close()
-    cleanup_old_files()
-    log(f"\n📊 Summary: processed {processed} commands. Bot stopped.")
-    sys.exit(0)
+    bot = BaleBot(config)
+    try:
+        await bot.start()
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupted by user")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
