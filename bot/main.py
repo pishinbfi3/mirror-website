@@ -27,7 +27,8 @@ def cleanup_old_files():
         "/tmp/command-output-*.txt",
         "/tmp/bale_download_*",
         "/tmp/*.part*",           # قطعات split
-        "/tmp/*.zip"              # فایل‌های zip موقت
+        "/tmp/*.zip",              # فایل‌های zip موقت
+        "/tmp/bale-bot-snapshot.json"  # snapshot نباید پاک شود (اختیاری)
     ]
     now = time.time()
     for pattern in patterns:
@@ -59,10 +60,18 @@ def main():
     handler = BaleBotHandler(config)
     log("✅ Bot handler initialized with process manager")
 
+    # بازیابی وضعیت قبلی در صورت وجود snapshot
+    if handler.load_snapshot():
+        log("🔄 Previous session snapshot loaded.")
+        handler.send_message("🔄 **Session restored** – previous state (directory, background jobs) has been recovered.")
+    else:
+        log("✨ No snapshot found, starting fresh.")
+        handler.send_message("✨ **New session started** – use `/help` to see commands.")
+
     # Start from latest updates, ignore old history
-    offset = 0
+    offset = handler.get_offset()
     current_time = time.time()
-    log("📝 Starting with offset 0, ignoring messages older than 30 seconds")
+    log(f"📝 Starting with offset {offset}, ignoring messages older than 30 seconds")
 
     processed = 0
     stop_requested = False
@@ -105,17 +114,18 @@ def main():
                     continue
 
                 log(f"💬 Processing: {text[:50]}...")
-                # Check for stop command
-                if text.strip().lower() == "/stop":
-                    handler.send_message("🛑 Stopping bot now...")
-                    stop_requested = True
-                    break
-
+                
+                # پردازش دستور (شامل /stop)
                 response, file_path = handler.process_command(text)
                 handler.send_message(response, message.get("message_id"))
                 if file_path and os.path.exists(file_path):
                     handler.send_file(file_path, f"Output for: {text[:100]}")
                     os.unlink(file_path)
+
+                # اگر دستور /stop بود، حلقه را متوقف کن
+                if text.strip().lower() == "/stop":
+                    stop_requested = True
+                    break
 
                 processed += 1
                 log(f"✅ Response sent (total processed: {processed})")
