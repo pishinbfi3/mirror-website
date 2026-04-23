@@ -1,3 +1,3 @@
-"""Bale SSH Bot package."""
+"""Bale SSH Bot - Production Ready Async Version"""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
