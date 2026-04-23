@@ -1,34 +1,41 @@
-"""Configuration module for Bale SSH Bot - NO RESTRICTIONS."""
+"""Configuration management using Pydantic Settings."""
 
-import os
-from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
+from pydantic import Field, HttpUrl, PositiveInt
+from pydantic_settings import BaseSettings
 
 
-@dataclass
-class BotConfig:
-    """Bot configuration settings."""
-    
-    bot_token: str
-    chat_id: str
-    api_base_url: str = "https://tapi.bale.ai"
-    update_offset_file: str = "/tmp/bale-bot-offset.txt"
-    log_file: str = "/tmp/bale-bot-execution.log"
-    snapshot_file: str = "/tmp/bale-bot-snapshot.json"
-    max_message_length: int = 4000
-    timeout_seconds: int = 300
-    allowed_commands: tuple = field(default_factory=tuple)  # Empty = ALL ALLOWED
-    
-    @classmethod
-    def from_env(cls) -> "BotConfig":
-        """Create config from environment variables."""
-        bot_token = os.environ.get("BALE_BOT_TOKEN")
-        chat_id = os.environ.get("BALE_CHAT_ID")
-        
-        if not bot_token or not chat_id:
-            raise ValueError("BALE_BOT_TOKEN and BALE_CHAT_ID must be set")
-        
-        return cls(
-            bot_token=bot_token,
-            chat_id=chat_id
-        )
+class BotConfig(BaseSettings):
+    """All bot configuration, loaded from environment variables."""
+
+    # Required secrets
+    bot_token: str = Field(..., env="BALE_BOT_TOKEN")
+    chat_id: str = Field(..., env="BALE_CHAT_ID")
+
+    # API settings
+    api_base_url: HttpUrl = Field(
+        "https://tapi.bale.ai", env="BALE_API_BASE_URL"
+    )
+    api_timeout: PositiveInt = Field(30, env="BALE_API_TIMEOUT")
+
+    # Polling behaviour
+    poll_timeout: PositiveInt = Field(30, env="BALE_POLL_TIMEOUT")
+    poll_interval: float = Field(1.0, env="BALE_POLL_INTERVAL")
+    max_retries: PositiveInt = Field(3, env="BALE_MAX_RETRIES")
+
+    # Command execution
+    command_timeout: PositiveInt = Field(300, env="BALE_COMMAND_TIMEOUT")
+    max_output_chars: PositiveInt = Field(4_000_000, env="BALE_MAX_OUTPUT")
+
+    # File handling
+    max_message_length: PositiveInt = Field(4000, env="BALE_MAX_MSG_LEN")
+    chunk_size: PositiveInt = 9 * 1024 * 1024  # 9 MiB for split files
+
+    # State persistence
+    state_dir: str = Field("/tmp/bale_bot", env="BALE_STATE_DIR")
+    offset_file: str = "offset.txt"
+    snapshot_file: str = "snapshot.json"
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
