@@ -14,6 +14,7 @@ class BotConfig:
     api_base_url: str = "https://tapi.bale.ai"
     update_offset_file: str = "/tmp/bale-bot-offset.txt"
     log_file: str = "/tmp/bale-bot-execution.log"
+    snapshot_file: str = "/tmp/bale-bot-snapshot.json"
     max_message_length: int = 4000
     timeout_seconds: int = 300
     allowed_commands: tuple = field(default_factory=tuple)  # Empty = ALL ALLOWED
