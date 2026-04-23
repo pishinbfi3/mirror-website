@@ -40,7 +40,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: python -m bot.main
 
-      - name: Upload execution logs
+      - name: Upload execution logs and snapshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -48,4 +48,5 @@ jobs:
           path: |
             /tmp/bale-bot-*.log
             /tmp/command-output-*.txt
+            /tmp/bale-bot-snapshot.json
           retention-days: 7
