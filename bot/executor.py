@@ -1,96 +1,94 @@
-"""Command executor with manual state tracking – cd handled internally."""
+"""Async command executor with persistent working directory."""
 
-import subprocess
+import asyncio
 import os
-import time
 import tempfile
 from typing import Tuple, Optional
-from datetime import datetime
+
+from .config import BotConfig
+from .exceptions import CommandError
+from .logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class CommandExecutor:
-    """Executes commands with manual state tracking (cwd, env)."""
+    """Executes shell commands asynchronously, keeping cd state."""
 
-    def __init__(self, timeout: int = 300, max_output_size: int = 1_000_000):
-        self.timeout = timeout
-        self.max_output_size = max_output_size
-        self.current_dir = os.getcwd()  # start in the repo root
+    def __init__(self, config: BotConfig):
+        self.config = config
+        self.current_dir = os.getcwd()  # start at repo root
         self.env = os.environ.copy()
         self.env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-    def execute(self, command: str) -> Tuple[int, str, str, float]:
+    async def execute(
+        self, command: str
+    ) -> Tuple[int, str, str, float]:
         """
-        Execute a command.
-        For `cd` commands, we change the internal directory without running a subprocess.
-        For other commands, we prefix with `cd '{current_dir}' &&` to preserve state.
+        Execute a command asynchronously.
+        For `cd` command, update internal state without subprocess.
+        Returns (exit_code, stdout, stderr, execution_time_seconds).
         """
-        start_time = time.time()
-        cmd_stripped = command.strip()
+        import time
+        start = time.monotonic()
+        cmd = command.strip()
 
-        # Handle cd command internally
-        if cmd_stripped.startswith('cd '):
-            return self._handle_cd(cmd_stripped, start_time)
+        # Handle cd internally
+        if cmd.startswith("cd "):
+            return self._handle_cd(cmd, start)
 
-        # For any other command, run in a subprocess with current directory prefix
-        final_command = command
+        # Build final command with cd prefix to preserve state
+        final_cmd = cmd
         if self.current_dir:
-            # Escape single quotes in directory name
             safe_dir = self.current_dir.replace("'", "'\\''")
-            final_command = f"cd '{safe_dir}' && {command}"
+            final_cmd = f"cd '{safe_dir}' && {cmd}"
 
+        # Run in thread pool (subprocess is blocking)
+        loop = asyncio.get_running_loop()
         try:
-            with tempfile.NamedTemporaryFile(mode='w+', suffix='.out', delete=False) as out_f, \
-                 tempfile.NamedTemporaryFile(mode='w+', suffix='.err', delete=False) as err_f:
-
-                proc = subprocess.Popen(
-                    final_command,
-                    shell=True,
-                    executable='/bin/bash',
-                    stdout=out_f,
-                    stderr=err_f,
-                    env=self.env,
-                    cwd="/",  # we use explicit cd, so cwd doesn't matter
-                    text=True
-                )
-
-                try:
-                    exit_code = proc.wait(timeout=self.timeout)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-                    stderr = f"Command timed out after {self.timeout} seconds"
-                    exit_code = -1
-
-                with open(out_f.name, 'r') as f:
-                    stdout = f.read(self.max_output_size)
-                    if len(stdout) == self.max_output_size:
-                        stdout += "\n... [Output truncated]"
-                with open(err_f.name, 'r') as f:
-                    stderr = f.read(self.max_output_size)
-                    if len(stderr) == self.max_output_size:
-                        stderr += "\n... [Output truncated]"
-
-                os.unlink(out_f.name)
-                os.unlink(err_f.name)
-
-        except Exception as e:
-            stderr = f"Execution error: {str(e)}"
+            proc = await asyncio.create_subprocess_shell(
+                final_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+                executable="/bin/bash",
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self.config.command_timeout
+            )
+            exit_code = proc.returncode
+            stdout_str = stdout.decode("utf-8", errors="replace")
+            stderr_str = stderr.decode("utf-8", errors="replace")
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
             exit_code = -1
+            stdout_str = ""
+            stderr_str = f"Command timed out after {self.config.command_timeout} seconds"
+        except Exception as e:
+            logger.exception("Command execution failed")
+            exit_code = -1
+            stdout_str = ""
+            stderr_str = str(e)
 
-        execution_time = time.time() - start_time
-        self._save_output(command, exit_code, stdout, stderr, execution_time)
-        return exit_code, stdout, stderr, execution_time
+        # Truncate if needed
+        max_chars = self.config.max_output_chars
+        if len(stdout_str) > max_chars:
+            stdout_str = stdout_str[:max_chars] + "\n...[truncated]"
+        if len(stderr_str) > max_chars:
+            stderr_str = stderr_str[:max_chars] + "\n...[truncated]"
+
+        exec_time = time.monotonic() - start
+        self._log_command(cmd, exit_code, exec_time)
+        return exit_code, stdout_str, stderr_str, exec_time
 
     def _handle_cd(self, command: str, start_time: float) -> Tuple[int, str, str, float]:
-        """Handle cd command without subprocess."""
-        # Extract target directory (remove 'cd ' and strip quotes)
-        target = command[3:].strip()
-        target = target.strip("'\"")
+        """Change internal directory without subprocess."""
+        target = command[3:].strip().strip("'\"")
         if not target:
             return 1, "", "cd: missing directory", 0.0
 
-        # Resolve relative to current_dir
-        if target.startswith('/'):
+        if target.startswith("/"):
             new_dir = target
         else:
             new_dir = os.path.join(self.current_dir, target)
@@ -98,45 +96,23 @@ class CommandExecutor:
 
         if os.path.isdir(new_dir):
             self.current_dir = new_dir
-            execution_time = time.time() - start_time
-            return 0, f"Changed directory to {self.current_dir}", "", execution_time
+            return 0, f"Changed directory to {self.current_dir}", "", 0.0
         else:
-            execution_time = time.time() - start_time
-            return 1, "", f"cd: {target}: No such file or directory", execution_time
+            return 1, "", f"cd: {target}: No such file or directory", 0.0
 
     def set_directory(self, path: str) -> bool:
-        """Change the current working directory (manual state update)."""
+        """Manually change current working directory."""
         if os.path.isdir(path):
             self.current_dir = os.path.abspath(path)
             return True
-        # Try relative to current_dir
-        test_path = os.path.join(self.current_dir, path)
-        if os.path.isdir(test_path):
-            self.current_dir = test_path
+        test = os.path.join(self.current_dir, path)
+        if os.path.isdir(test):
+            self.current_dir = test
             return True
         return False
 
     def get_directory(self) -> str:
         return self.current_dir
 
-    def _save_output(self, command: str, exit_code: int, stdout: str, stderr: str, exec_time: float):
-        output_file = f"/tmp/command-output-{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        try:
-            with open(output_file, 'w') as f:
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-                f.write(f"Command: {command}\n")
-                f.write(f"Exit Code: {exit_code}\n")
-                f.write(f"Execution Time: {exec_time:.2f}s\n")
-                f.write("-" * 50 + "\n")
-                f.write("STDOUT:\n")
-                f.write(stdout if stdout else "(empty)\n")
-                f.write("-" * 50 + "\n")
-                f.write("STDERR:\n")
-                f.write(stderr if stderr else "(empty)\n")
-        except Exception:
-            pass
-
-    def execute_background(self, command: str, timeout: int = 300):
-        """Returns a job_id for background execution."""
-        from .process_manager import ProcessManager
-        return self.process_manager.submit(command, timeout)
+    def _log_command(self, cmd: str, exit_code: int, exec_time: float) -> None:
+        logger.debug(f"CMD: {cmd[:200]} | exit={exit_code} | time={exec_time:.2f}s")
